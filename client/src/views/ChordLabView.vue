@@ -20,8 +20,13 @@
         v-for="(chord, i) in chords"
         :key="i"
         :model-value="chord"
-        @update:model-value="(v: [number, number, number, number]) => chords[i] = v"
+        :index="i"
+        @update:model-value="(v: ChordData) => chords[i] = v"
         @remove="removeChord(i)"
+        @drag-start="onDragStart"
+        @drag-over="onDragOver"
+        @drag-drop="onDragDrop"
+        @drag-end="onDragEnd"
       />
       <button class="add-btn" @click="addChord">+</button>
     </div>
@@ -31,27 +36,47 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import ChordBlock from '../components/ChordBlock.vue';
+import type { ChordData } from '../components/ChordBlock.vue';
 import { startProgression, stopProgression } from '../api/client';
 
-const defaultChords: [number, number, number, number][] = [
-  [1, 4, 0, 0],  // C major
-  [6, 4, 0, 0],  // F major
-  [8, 4, 0, 0],  // G major
-  [10, 4, 1, 0], // A minor
+const defaultChords: ChordData[] = [
+  [1, 4, 0, 0, false],
+  [6, 4, 0, 0, false],
+  [8, 4, 0, 0, false],
+  [10, 4, 1, 0, false],
 ];
 
-const chords = ref<[number, number, number, number][]>(defaultChords.map((c) => [...c] as [number, number, number, number]));
+const chords = ref<ChordData[]>(defaultChords.map((c) => [...c] as ChordData));
 const bpm = ref(80);
 const running = ref(false);
 
+let dragIndex = -1;
+
 function addChord() {
-  chords.value.push([1, 4, 0, 0]);
+  chords.value.push([1, 4, 0, 0, false]);
 }
 
 function removeChord(index: number) {
   if (chords.value.length > 1) {
     chords.value.splice(index, 1);
   }
+}
+
+function onDragStart(index: number) {
+  dragIndex = index;
+}
+
+function onDragOver(_index: number) {}
+
+function onDragDrop(targetIndex: number) {
+  if (dragIndex === -1 || dragIndex === targetIndex) return;
+  const item = chords.value.splice(dragIndex, 1)[0];
+  chords.value.splice(targetIndex, 0, item);
+  dragIndex = -1;
+}
+
+function onDragEnd() {
+  dragIndex = -1;
 }
 
 async function handleStart() {

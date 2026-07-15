@@ -30,7 +30,7 @@ export async function setPort(port: string): Promise<void> {
   });
 }
 
-export async function startProgression(chords: number[][], bpm?: number): Promise<void> {
+export async function startProgression(chords: (number | boolean)[][], bpm?: number): Promise<void> {
   await fetchJSON('/chord-lab/start-progression', {
     method: 'POST',
     body: JSON.stringify({ chords, bpm }),

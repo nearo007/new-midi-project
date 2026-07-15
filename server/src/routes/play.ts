@@ -10,7 +10,7 @@ export function playRouter(player: PlayerService) {
             res.status(400).json({ error: "Invalid keyNum. Must be 0-127." });
             return;
         }
-        await player.playSequence([[keyNum]]);
+        await player.playSequence([{ notes: [keyNum], muted: false }]);
         res.json({ ok: true });
     });
 

@@ -13,6 +13,8 @@ function midiToFreq(midi: number): number {
 
 export function playTone(midi: number, duration = 0.3): void {
   const ctx = getCtx();
+  if (ctx.state === 'suspended') return;
+
   const now = ctx.currentTime;
 
   const osc = ctx.createOscillator();
@@ -29,4 +31,11 @@ export function playTone(midi: number, duration = 0.3): void {
 
   osc.start(now);
   osc.stop(now + duration);
+}
+
+export async function resumeAudio(): Promise<void> {
+  const ctx = getCtx();
+  if (ctx.state === 'suspended') {
+    await ctx.resume();
+  }
 }

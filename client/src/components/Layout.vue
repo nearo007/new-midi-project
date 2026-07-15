@@ -1,5 +1,5 @@
 <template>
-  <div class="layout">
+  <div class="layout" @click="resumeAudio">
     <header class="header">
       <nav class="nav">
         <router-link to="/piano" class="nav-link">Piano</router-link>
@@ -15,6 +15,7 @@
 
 <script setup lang="ts">
 import PortSelector from './PortSelector.vue';
+import { resumeAudio } from '../api/audio';
 </script>
 
 <style scoped>

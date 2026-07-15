@@ -6,6 +6,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface SequenceEntry {
+  notes: number[];
+  muted: boolean;
+}
+
 export class PlayerService {
   private midi: MidiOutput;
   private config: Config;
@@ -33,26 +38,30 @@ export class PlayerService {
     return this.playing;
   }
 
-  async playSequence(sequence: number[][]): Promise<void> {
+  async playSequence(sequence: SequenceEntry[]): Promise<void> {
     const interval = calcInterval(this.config.bpm, this.config.timeSignature);
     const noteDuration = calcNoteDuration(interval, this.config.staccato);
     const silenceDuration = calcSilenceDuration(interval, noteDuration);
 
-    for (const chord of sequence) {
+    for (const entry of sequence) {
       if (!this.playing) break;
-      for (const note of chord) {
-        this.midi.sendNoteOn(note, 100);
+      if (!entry.muted) {
+        for (const note of entry.notes) {
+          this.midi.sendNoteOn(note, 100);
+        }
       }
       await sleep(noteDuration * 1000);
-      for (const note of chord) {
-        this.midi.sendNoteOff(note);
+      if (!entry.muted) {
+        for (const note of entry.notes) {
+          this.midi.sendNoteOff(note);
+        }
       }
       await sleep(silenceDuration * 1000);
     }
     this.playing = false;
   }
 
-  async loopSequence(sequence: number[][]): Promise<void> {
+  async loopSequence(sequence: SequenceEntry[]): Promise<void> {
     this.stopLoop();
     await sleep(100);
 
@@ -62,14 +71,18 @@ export class PlayerService {
     const silenceDuration = calcSilenceDuration(interval, noteDuration);
 
     while (this.playing) {
-      for (const chord of sequence) {
+      for (const entry of sequence) {
         if (!this.playing) break;
-        for (const note of chord) {
-          this.midi.sendNoteOn(note, 100);
+        if (!entry.muted) {
+          for (const note of entry.notes) {
+            this.midi.sendNoteOn(note, 100);
+          }
         }
         await sleep(noteDuration * 1000);
-        for (const note of chord) {
-          this.midi.sendNoteOff(note);
+        if (!entry.muted) {
+          for (const note of entry.notes) {
+            this.midi.sendNoteOff(note);
+          }
         }
         await sleep(silenceDuration * 1000);
       }
