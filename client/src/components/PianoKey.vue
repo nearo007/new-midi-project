@@ -14,6 +14,7 @@
 import { ref } from 'vue';
 import { playNote } from '../api/client';
 import { playTone } from '../api/audio';
+import { useSound } from '../api/sound-toggle';
 
 const props = defineProps<{
   midiNote: number;
@@ -21,10 +22,13 @@ const props = defineProps<{
 }>();
 
 const pressed = ref(false);
+const soundOn = useSound();
 
 function pressKey() {
   pressed.value = true;
-  playTone(props.midiNote);
+  if (soundOn.value) {
+    playTone(props.midiNote);
+  }
   playNote(props.midiNote).catch(() => {});
 }
 

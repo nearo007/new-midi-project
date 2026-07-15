@@ -35,10 +35,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onUnmounted } from 'vue';
+import { ref, onUnmounted, watch } from 'vue';
 import ChordBlock from '../components/ChordBlock.vue';
 import type { ChordData } from '../components/ChordBlock.vue';
 import { startProgression, stopProgression, getProgressionStatus } from '../api/client';
+import { useSound } from '../api/sound-toggle';
+import { playChord } from '../api/audio';
+import { chordTupleToNotes } from '../api/chord-builder';
 
 const defaultChords: ChordData[] = [
   [1, 4, 1, 0, false],   // Cm
@@ -51,9 +54,11 @@ const chords = ref<ChordData[]>(defaultChords.map((c) => [...c] as ChordData));
 const bpm = ref(80);
 const running = ref(false);
 const currentChord = ref(-1);
+const soundOn = useSound();
 
 let dragIndex = -1;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let lastPlayedChord = -1;
 
 function startPolling() {
   stopPolling();
@@ -80,6 +85,23 @@ function stopPolling() {
 }
 
 onUnmounted(stopPolling);
+
+watch(currentChord, (idx) => {
+  if (idx === -1 || idx === lastPlayedChord) return;
+  lastPlayedChord = idx;
+  if (soundOn.value && idx >= 0 && idx < chords.value.length) {
+    const tuple = chords.value[idx];
+    if (!tuple[4]) {
+      const notes = chordTupleToNotes(tuple);
+      const interval = 60 / bpm.value / 0.5;
+      playChord(notes, interval * 0.9);
+    }
+  }
+});
+
+watch(running, (val) => {
+  if (!val) lastPlayedChord = -1;
+});
 
 function addChord() {
   chords.value.push([1, 4, 0, 0, false]);

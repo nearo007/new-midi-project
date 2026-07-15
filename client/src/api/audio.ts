@@ -33,6 +33,12 @@ export function playTone(midi: number, duration = 0.3): void {
   osc.stop(now + duration);
 }
 
+export function playChord(notes: number[], duration = 0.3): void {
+  for (const note of notes) {
+    playTone(note, duration);
+  }
+}
+
 export async function resumeAudio(): Promise<void> {
   const ctx = getCtx();
   if (ctx.state === 'suspended') {
