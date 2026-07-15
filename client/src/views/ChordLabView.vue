@@ -21,6 +21,7 @@
         :key="i"
         :model-value="chord"
         :index="i"
+        :active="currentChord === i"
         @update:model-value="(v: ChordData) => chords[i] = v"
         @remove="removeChord(i)"
         @drag-start="onDragStart"
@@ -34,23 +35,51 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onUnmounted } from 'vue';
 import ChordBlock from '../components/ChordBlock.vue';
 import type { ChordData } from '../components/ChordBlock.vue';
-import { startProgression, stopProgression } from '../api/client';
+import { startProgression, stopProgression, getProgressionStatus } from '../api/client';
 
 const defaultChords: ChordData[] = [
-  [1, 4, 0, 0, false],
-  [6, 4, 0, 0, false],
-  [8, 4, 0, 0, false],
-  [10, 4, 1, 0, false],
+  [1, 4, 1, 0, false],   // Cm
+  [11, 3, 0, 0, false],  // A#
+  [9, 3, 0, 0, false],   // G#
+  [8, 3, 1, 2, false],   // Gm7
 ];
 
 const chords = ref<ChordData[]>(defaultChords.map((c) => [...c] as ChordData));
 const bpm = ref(80);
 const running = ref(false);
+const currentChord = ref(-1);
 
 let dragIndex = -1;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function startPolling() {
+  stopPolling();
+  pollTimer = setInterval(async () => {
+    try {
+      const status = await getProgressionStatus();
+      currentChord.value = status.currentChord;
+      if (!status.playing && running.value) {
+        running.value = false;
+        currentChord.value = -1;
+        stopPolling();
+      }
+    } catch {
+      // ignore polling errors
+    }
+  }, 150);
+}
+
+function stopPolling() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+onUnmounted(stopPolling);
 
 function addChord() {
   chords.value.push([1, 4, 0, 0, false]);
@@ -83,6 +112,7 @@ async function handleStart() {
   try {
     await startProgression(chords.value, bpm.value);
     running.value = true;
+    startPolling();
   } catch (err) {
     console.error('Failed to start progression:', err);
   }
@@ -92,6 +122,8 @@ async function handleStop() {
   try {
     await stopProgression();
     running.value = false;
+    currentChord.value = -1;
+    stopPolling();
   } catch (err) {
     console.error('Failed to stop progression:', err);
   }

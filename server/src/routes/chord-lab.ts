@@ -48,6 +48,10 @@ export function chordLabRouter(player: PlayerService, midi: JzzAdapter) {
     res.json({ ok: true });
   });
 
+  router.get('/status', (_req, res) => {
+    res.json({ playing: player.isPlaying(), currentChord: player.currentChordIndex });
+  });
+
   router.get('/progression/preview', (req, res) => {
     const { chords } = req.query as { chords?: string };
     if (!chords) {

@@ -16,6 +16,7 @@ export class PlayerService {
   private config: Config;
   private playing = false;
   private loopTimeout: ReturnType<typeof setTimeout> | null = null;
+  private _currentChordIndex = -1;
 
   constructor(midi: MidiOutput, config: Config) {
     this.midi = midi;
@@ -36,6 +37,10 @@ export class PlayerService {
 
   isPlaying(): boolean {
     return this.playing;
+  }
+
+  get currentChordIndex(): number {
+    return this._currentChordIndex;
   }
 
   async playSequence(sequence: SequenceEntry[]): Promise<void> {
@@ -71,8 +76,10 @@ export class PlayerService {
     const silenceDuration = calcSilenceDuration(interval, noteDuration);
 
     while (this.playing) {
-      for (const entry of sequence) {
+      for (let i = 0; i < sequence.length; i++) {
         if (!this.playing) break;
+        const entry = sequence[i];
+        this._currentChordIndex = i;
         if (!entry.muted) {
           for (const note of entry.notes) {
             this.midi.sendNoteOn(note, 100);
@@ -87,10 +94,12 @@ export class PlayerService {
         await sleep(silenceDuration * 1000);
       }
     }
+    this._currentChordIndex = -1;
   }
 
   stopLoop(): void {
     this.playing = false;
+    this._currentChordIndex = -1;
     if (this.loopTimeout) {
       clearTimeout(this.loopTimeout);
       this.loopTimeout = null;

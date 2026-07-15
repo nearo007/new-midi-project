@@ -42,3 +42,7 @@ export async function stopProgression(): Promise<void> {
     method: 'POST',
   });
 }
+
+export async function getProgressionStatus(): Promise<{ playing: boolean; currentChord: number }> {
+  return fetchJSON('/chord-lab/status');
+}

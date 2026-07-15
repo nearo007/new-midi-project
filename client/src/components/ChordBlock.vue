@@ -1,7 +1,7 @@
 <template>
   <div
     class="chord-block"
-    :class="{ muted: local.muted, dragging: isDragging }"
+    :class="{ muted: local.muted, dragging: isDragging, active: active }"
     draggable="true"
     @dragstart="onDragStart"
     @dragover.prevent="onDragOver"
@@ -59,6 +59,7 @@ const KEY_NAMES: Record<number, string> = {
 const props = defineProps<{
   modelValue: ChordData;
   index: number;
+  active: boolean;
 }>();
 
 const emitEvent = defineEmits<{
@@ -151,6 +152,11 @@ const displayName = computed(() => {
 .chord-block.dragging {
   opacity: 0.5;
   border-color: rgba(168, 85, 247, 0.6);
+}
+
+.chord-block.active {
+  border-color: rgba(168, 85, 247, 0.8);
+  box-shadow: 0 0 12px rgba(168, 85, 247, 0.4), inset 0 0 8px rgba(168, 85, 247, 0.1);
 }
 
 .drag-handle {
