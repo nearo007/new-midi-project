@@ -1,0 +1,1 @@
+{"root":["./src/env.d.ts","./src/main.ts","./src/api/audio.ts","./src/api/client.ts","./src/router/index.ts","./src/App.vue","./src/components/ChordBlock.vue","./src/components/Layout.vue","./src/components/PianoKey.vue","./src/components/PianoKeyboard.vue","./src/components/PortSelector.vue","./src/views/ChordLabView.vue","./src/views/PianoView.vue"],"version":"5.9.3"}
