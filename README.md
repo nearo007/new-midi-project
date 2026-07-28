@@ -59,9 +59,11 @@ The melody uses a deterministic seed. Chord edits preserve the current seed; cha
 
 ### Screenshot 1
 
-  <!-- Add the first screenshot here -->
+<img width="1880" height="930" alt="image" src="https://github.com/user-attachments/assets/169a785e-298a-4e55-b093-c8c80fc9c50e" />
+
 
 ### Screenshot 2
 
-  <!-- Add the second screenshot here -->
+<img width="1880" height="930" alt="image" src="https://github.com/user-attachments/assets/6bb34a67-4342-4317-baff-1f113432dabc" />
+
 
