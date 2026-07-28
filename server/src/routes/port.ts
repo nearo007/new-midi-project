@@ -33,5 +33,15 @@ export function portRouter(midi: JzzAdapter, player: PlayerService) {
         res.json({ ok: true });
     });
 
+    router.post("/midi-output", (req, res) => {
+        const { enabled } = req.body as { enabled?: boolean };
+        if (typeof enabled !== "boolean") {
+            res.status(400).json({ error: "enabled must be a boolean" });
+            return;
+        }
+        player.setMidiOutputEnabled(enabled);
+        res.json({ ok: true, enabled: player.isMidiOutputEnabled() });
+    });
+
     return router;
 }

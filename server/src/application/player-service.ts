@@ -24,6 +24,7 @@ export class PlayerService {
   private loopRunId = 0;
   private nextNoteToken = 1;
   private activeNoteTokens = new Map<number, number>();
+  private midiOutputEnabled = true;
 
   constructor(midi: MidiOutput, config: Config) {
     this.midi = midi;
@@ -50,7 +51,18 @@ export class PlayerService {
     return this._currentChordIndex;
   }
 
+  setMidiOutputEnabled(enabled: boolean): void {
+    if (this.midiOutputEnabled === enabled) return;
+    if (!enabled) this.releaseAllNotes();
+    this.midiOutputEnabled = enabled;
+  }
+
+  isMidiOutputEnabled(): boolean {
+    return this.midiOutputEnabled;
+  }
+
   private noteOn(note: number, velocity = 100): number {
+    if (!this.midiOutputEnabled) return 0;
     const token = this.nextNoteToken++;
     this.activeNoteTokens.set(token, note);
     this.midi.sendNoteOn(note, velocity);
@@ -58,10 +70,11 @@ export class PlayerService {
   }
 
   private noteOff(token: number): void {
+    if (!token) return;
     const note = this.activeNoteTokens.get(token);
     if (note === undefined) return;
     this.activeNoteTokens.delete(token);
-    this.midi.sendNoteOff(note);
+    if (this.midiOutputEnabled) this.midi.sendNoteOff(note);
   }
 
   private releaseTokens(tokens: number[]): void {

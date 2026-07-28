@@ -20,6 +20,7 @@ import { playTone } from '../api/audio';
 import { useSound } from '../api/sound-toggle';
 import {
   hasSelectedBrowserMidiOutput,
+  midiOutputEnabled,
   onBrowserMidiNote,
   sendBrowserNoteOff,
   sendBrowserNoteOn,
@@ -81,14 +82,14 @@ function pressKey(event: MouseEvent | TouchEvent) {
   if (soundOn.value) {
     playTone(props.midiNote, 0.3, velocity);
   }
-  if (!sendBrowserNoteOn(props.midiNote, velocity)) {
+  if (midiOutputEnabled.value && !sendBrowserNoteOn(props.midiNote, velocity)) {
     playNote(props.midiNote, velocity).catch(() => {});
   }
 }
 
 function releaseKey() {
   pressed.value = false;
-  if (hasSelectedBrowserMidiOutput()) sendBrowserNoteOff(props.midiNote);
+  if (midiOutputEnabled.value && hasSelectedBrowserMidiOutput()) sendBrowserNoteOff(props.midiNote);
 }
 </script>
 

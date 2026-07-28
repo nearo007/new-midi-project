@@ -145,7 +145,8 @@ import { useSound } from '../api/sound-toggle';
 import { playChordWithMelody } from '../api/audio';
 import { chordTupleToNotes } from '../api/chord-builder';
 import { generateMelody, type MelodyRegister, type MelodyScale, type MelodySettings } from '../api/melody';
-import { playBrowserChordWithMelody, stopBrowserMidiPlayback } from '../api/midi';
+import { midiOutputEnabled, playBrowserChordWithMelody, stopBrowserMidiPlayback } from '../api/midi';
+import { readStoredSettings, updateStoredSettings } from '../api/settings';
 
 const defaultChords: ChordData[] = [
   [1, 4, 1, 0, false],   // Cm
@@ -154,12 +155,30 @@ const defaultChords: ChordData[] = [
   [8, 3, 1, 2, false],   // Gm7
 ];
 
-const chords = ref<ChordData[]>(defaultChords.map((c) => [...c] as ChordData));
-const bpm = ref(80);
+const savedChordLab = readStoredSettings().chordLab ?? {};
+
+function storedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(max, Math.max(min, value))
+    : fallback;
+}
+
+function isStoredChord(value: unknown): value is ChordData {
+  if (!Array.isArray(value) || value.length !== 5) return false;
+  const [note, octave, tonality, seventh, muted] = value;
+  return [note, octave, tonality, seventh].every((item) => typeof item === 'number' && Number.isInteger(item))
+    && typeof muted === 'boolean';
+}
+
+const savedChords = Array.isArray(savedChordLab.chords)
+  ? savedChordLab.chords.filter(isStoredChord).map((chord) => [...chord] as ChordData)
+  : [];
+const chords = ref<ChordData[]>(savedChords.length ? savedChords : defaultChords.map((c) => [...c] as ChordData));
+const bpm = ref(storedNumber(savedChordLab.bpm, 80, 20, 240));
 const running = ref(false);
 const currentChord = ref(-1);
 const soundOn = useSound();
-const chordsEnabled = ref(true);
+const chordsEnabled = ref(savedChordLab.chordsEnabled ?? true);
 
 const KEY_OPTIONS = [
   { value: 1, label: 'C' }, { value: 2, label: 'C#' }, { value: 3, label: 'D' },
@@ -174,14 +193,22 @@ const REGISTER_OPTIONS: { value: MelodyRegister; label: string; octaves: string 
   { value: 'high', label: 'High', octaves: '5–6' },
 ];
 
-const melodyEnabled = ref(false);
+const melodyEnabled = ref(savedChordLab.melodyEnabled ?? false);
 const VELOCITY_LEVELS = [24, 48, 72, 96, 120];
-const harmonyVelocityLevel = ref(4);
-const melodyVelocityLevel = ref(4);
-const melodyScale = ref<MelodyScale>('chord');
-const melodyKey = ref(1);
-const melodyNotesPerChord = ref(2);
-const melodyRegister = ref<MelodyRegister>('mid');
+const harmonyVelocityLevel = ref(storedNumber(savedChordLab.harmonyVelocityLevel, 4, 1, 5));
+const melodyVelocityLevel = ref(storedNumber(savedChordLab.melodyVelocityLevel, 4, 1, 5));
+const melodyScale = ref<MelodyScale>(
+  ['chord', 'major', 'minor', 'blues', 'chromatic'].includes(savedChordLab.melodyScale ?? '')
+    ? savedChordLab.melodyScale as MelodyScale
+    : 'chord',
+);
+const melodyKey = ref(storedNumber(savedChordLab.melodyKey, 1, 1, 12));
+const melodyNotesPerChord = ref(storedNumber(savedChordLab.melodyNotesPerChord, 2, 0, 4));
+const melodyRegister = ref<MelodyRegister>(
+  ['low', 'mid', 'high'].includes(savedChordLab.melodyRegister ?? '')
+    ? savedChordLab.melodyRegister as MelodyRegister
+    : 'mid',
+);
 const melodySeed = ref(createSeed());
 
 const melodySettings = computed<MelodySettings>(() => {
@@ -263,6 +290,25 @@ watch(chordsEnabled, queueProgressionUpdate);
 watch(bpm, queueProgressionUpdate);
 watch([harmonyVelocityLevel, melodyVelocityLevel], queueProgressionUpdate);
 
+watch(
+  [chords, bpm, chordsEnabled, melodyEnabled, harmonyVelocityLevel, melodyVelocityLevel, melodyScale, melodyKey, melodyNotesPerChord, melodyRegister],
+  () => updateStoredSettings({
+    chordLab: {
+      chords: chords.value,
+      bpm: bpm.value,
+      chordsEnabled: chordsEnabled.value,
+      melodyEnabled: melodyEnabled.value,
+      harmonyVelocityLevel: harmonyVelocityLevel.value,
+      melodyVelocityLevel: melodyVelocityLevel.value,
+      melodyScale: melodyScale.value,
+      melodyKey: melodyKey.value,
+      melodyNotesPerChord: melodyNotesPerChord.value,
+      melodyRegister: melodyRegister.value,
+    },
+  }),
+  { deep: true },
+);
+
 watch([melodyEnabled, melodyScale, melodyKey, melodyNotesPerChord, melodyRegister], () => {
   // A restriction change is an explicit new idea; chord edits keep using this
   // seed so their melody remains predictable while the loop is running.
@@ -288,7 +334,7 @@ watch(currentChord, (idx) => {
       playback.value.melodyVelocity,
     );
   }
-  if (idx >= 0 && idx < chords.value.length) {
+  if (midiOutputEnabled.value && idx >= 0 && idx < chords.value.length) {
     const tuple = chords.value[idx];
     const notes = !chordsEnabled.value || tuple[4] ? [] : chordTupleToNotes(tuple);
     const melody = melodySettings.value.enabled

@@ -43,6 +43,13 @@ export async function clearPort(): Promise<void> {
   await fetchJSON('/clear-port', { method: 'POST' });
 }
 
+export async function setServerMidiOutputEnabled(enabled: boolean): Promise<void> {
+  await fetchJSON('/midi-output', {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  });
+}
+
 export type ChordTuple = [number, number, number, number, boolean];
 
 export async function startProgression(

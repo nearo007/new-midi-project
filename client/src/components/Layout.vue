@@ -69,6 +69,7 @@ import PortSelector from './PortSelector.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { resumeAudio } from '../api/audio';
 import { useSound, setSoundEnabled } from '../api/sound-toggle';
+import { readStoredSettings, updateStoredSettings } from '../api/settings';
 
 const soundOn = useSound();
 const themeMenuOpen = ref(false);
@@ -90,6 +91,7 @@ const activeTheme = computed(() => THEME_OPTIONS.find((option) => option.id === 
 function applyTheme(value: ThemeId) {
   document.documentElement.dataset.theme = value;
   localStorage.setItem('midi-toolbox-theme', value);
+  updateStoredSettings({ theme: value });
 }
 
 function selectTheme(value: ThemeId) {
@@ -100,25 +102,33 @@ function selectTheme(value: ThemeId) {
 
 function handleLayoutClick() {
   themeMenuOpen.value = false;
-  resumeAudio();
+  void resumeAudio().catch(() => {});
 }
 
 function toggleSound() {
   setSoundEnabled(!soundOn.value);
   if (soundOn.value) {
-    resumeAudio();
+    void resumeAudio().catch(() => {});
   }
 }
 
+function unlockAudio() {
+  if (soundOn.value) void resumeAudio().catch(() => {});
+}
+
 onMounted(() => {
-  const savedTheme = localStorage.getItem('midi-toolbox-theme') as ThemeId | null;
+  const savedTheme = (localStorage.getItem('midi-toolbox-theme') ?? readStoredSettings().theme) as ThemeId | null;
   const isTheme = savedTheme && THEME_OPTIONS.some((option) => option.id === savedTheme);
   const initialTheme = isTheme ? savedTheme : 'default';
   theme.value = initialTheme;
   applyTheme(initialTheme);
+  window.addEventListener('pointerdown', unlockAudio, true);
+  window.addEventListener('keydown', unlockAudio, true);
 });
 
 onUnmounted(() => {
+  window.removeEventListener('pointerdown', unlockAudio, true);
+  window.removeEventListener('keydown', unlockAudio, true);
   delete document.documentElement.dataset.theme;
 });
 </script>
