@@ -92,7 +92,7 @@ export function generateMelody(chords: ChordData[], settings: MelodySettings): n
 
 function chordTupleToNotes(tuple: ChordData): number[] {
   const steps = Array.from({ length: 11 }, (_, index) => index + 1);
-  const scale = steps.map((step) => 23 + tuple[0] + step + (tuple[1] - 1) * 12);
+  const scale = steps.map((step) => 22 + tuple[0] + step + (tuple[1] - 1) * 12);
   const intervals = tuple[2] === 0 ? [0, 4, 7] : [0, 3, 7];
   if (tuple[3] === 1) intervals.push(11);
   if (tuple[3] === 2) intervals.push(10);

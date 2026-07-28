@@ -23,6 +23,8 @@ try {
     console.log(`MIDI port opened: ${midi.currentPort()}`);
 } catch (err) {
     console.warn("No MIDI port available. MIDI output disabled.");
+    const midiStatus = midi.status();
+    if (midiStatus.error) console.warn(`MIDI backend: ${midiStatus.error}`);
     console.warn(err instanceof Error ? err.message : err);
 }
 

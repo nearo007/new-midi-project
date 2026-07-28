@@ -18,13 +18,26 @@ type ChordTuple = [number, number, number, number, boolean];
 export interface PlaybackSettings {
   chords: boolean;
   melody: boolean;
+  harmonyVelocity?: number;
+  melodyVelocity?: number;
 }
+
+const DEFAULT_HARMONY_VELOCITY = 100;
+const DEFAULT_MELODY_VELOCITY = 88;
 
 function validatePlaybackSettings(value: unknown): string | null {
   if (!value || typeof value !== 'object') return 'playback must be an object';
   const playback = value as Partial<PlaybackSettings>;
   if (typeof playback.chords !== 'boolean' || typeof playback.melody !== 'boolean') {
     return 'playback.chords and playback.melody must be booleans';
+  }
+  for (const [name, value] of [
+    ['harmonyVelocity', playback.harmonyVelocity],
+    ['melodyVelocity', playback.melodyVelocity],
+  ] as const) {
+    if (value !== undefined && (!Number.isInteger(value) || value < 1 || value > 127)) {
+      return `${name} must be an integer from 1-127`;
+    }
   }
   return null;
 }
@@ -41,7 +54,12 @@ function buildSequence(
       TONALITY_MAP[tonality] ?? 'major',
       SEVENTH_MAP[seventh] ?? 'none',
     );
-    return { notes, muted: !playback.chords || (muted ?? false) };
+    return {
+      notes,
+      muted: !playback.chords || (muted ?? false),
+      velocity: playback.harmonyVelocity ?? DEFAULT_HARMONY_VELOCITY,
+      melodyVelocity: playback.melodyVelocity ?? DEFAULT_MELODY_VELOCITY,
+    };
   });
 
   if (melody) {

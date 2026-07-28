@@ -1,5 +1,5 @@
 <template>
-  <div class="piano-container">
+  <div ref="pianoContainer" class="piano-container">
     <div class="piano">
       <PianoKey
         v-for="key in keys"
@@ -13,11 +13,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import PianoKey from './PianoKey.vue';
 
 const NOTE_IS_BLACK = [false, true, false, true, false, false, true, false, true, false, true, false];
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const pianoContainer = ref<HTMLElement | null>(null);
 
 interface PianoKeyInfo {
   midi: number;
@@ -28,11 +29,17 @@ interface PianoKeyInfo {
 const keys = computed<PianoKeyInfo[]>(() => {
   const result: PianoKeyInfo[] = [];
   for (let midi = 21; midi <= 108; midi++) {
-    const semitone = (midi - 21) % 12;
+    const semitone = midi % 12;
     const octave = Math.floor(midi / 12) - 1;
     result.push({ midi, black: NOTE_IS_BLACK[semitone], label: `${NOTE_NAMES[midi % 12]}${octave}` });
   }
   return result;
+});
+
+onMounted(() => {
+  const container = pianoContainer.value;
+  if (!container) return;
+  container.scrollLeft = Math.max(0, (container.scrollWidth - container.clientWidth) / 2);
 });
 </script>
 
@@ -49,8 +56,8 @@ const keys = computed<PianoKeyInfo[]>(() => {
   width: fit-content;
   min-width: max-content;
   padding: 0.9rem 0.75rem 0.75rem;
-  background: #0b0d10;
-  border: 1px solid #303640;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
   border-radius: 3px;
 }
 </style>

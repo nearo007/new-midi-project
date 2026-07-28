@@ -7,7 +7,7 @@ export function portRouter(midi: JzzAdapter, player: PlayerService) {
 
     router.get("/ports", (req, res) => {
         const ports = midi.listPorts();
-        res.json({ ports, current: midi.currentPort() });
+        res.json({ ports, current: midi.currentPort(), ...midi.status() });
     });
 
     router.post("/set-port", async (req, res) => {
@@ -27,6 +27,11 @@ export function portRouter(midi: JzzAdapter, player: PlayerService) {
         }
     });
 
+    router.post("/clear-port", (_req, res) => {
+        player.stopLoop();
+        midi.closePort();
+        res.json({ ok: true });
+    });
+
     return router;
 }
-

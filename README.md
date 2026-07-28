@@ -30,6 +30,16 @@ MIDI Toolbox is a browser-based MIDI workspace for playing notes and building ch
 
 - Node.js 20 or newer
 - A MIDI output device or virtual MIDI port for MIDI playback
+- For browser MIDI, use Chrome or Edge and open the app on `http://localhost:3000`
+
+The app can use either a MIDI output visible to the Node.js server or a browser Web
+MIDI output. The browser option is useful when the server runs in WSL or a container,
+because the browser can access a USB MIDI device attached to the host.
+
+On Linux, native server-side MIDI also requires the ALSA runtime (`libasound2`). If
+the server reports that native MIDI is unavailable, install that package and make
+sure the MIDI device is visible to the environment running Node.js, or select the
+device under **Browser MIDI** in the header.
 
 ## Installation
 
@@ -52,6 +62,12 @@ Open [http://localhost:3000](http://localhost:3000).
 ```bash
 npm run build
 npm start
+```
+
+Or build and start in one command:
+
+```bash
+npm run build:start
 ```
 
 The production server serves the built client and listens on port `3000` by default. Set `PORT` to use another port.

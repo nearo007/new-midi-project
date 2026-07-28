@@ -53,7 +53,7 @@ import PianoKeyboard from '../components/PianoKeyboard.vue';
 .eyebrow,
 .panel-kicker,
 .range-label {
-  color: var(--acid);
+  color: var(--coral);
   font-size: 0.65rem;
   font-weight: 850;
   letter-spacing: 0.16em;
@@ -112,7 +112,7 @@ import PianoKeyboard from '../components/PianoKeyboard.vue';
   height: 0.4rem;
   margin-right: 0.35rem;
   border-radius: 50%;
-  background: var(--acid);
+  background: var(--coral);
 }
 
 .piano-panel {
@@ -120,7 +120,7 @@ import PianoKeyboard from '../components/PianoKeyboard.vue';
   padding: clamp(1rem, 2.5vw, 2rem);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-top: 3px solid var(--acid);
+  border-top: 3px solid var(--coral);
   box-shadow: 12px 12px 0 #090a0c;
 }
 

@@ -18,7 +18,7 @@ const SEVENTH_ADDITIONS: Record<string, number> = {
 
 function getChordNotes(noteKey: number, octave: number, tonality: number, seventh: number): number[] {
   const steps = SCALE_PATTERNS.chromatic.slice(0, -1);
-  let current = 23 + noteKey;
+  let current = 22 + noteKey;
   const scale: number[] = [];
   for (const step of steps) {
     current += step;

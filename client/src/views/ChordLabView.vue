@@ -36,11 +36,17 @@
           <p class="control-caption">CHORDS</p>
           <h2>Chord progression</h2>
         </div>
-        <label class="source-toggle">
-          <input v-model="chordsEnabled" type="checkbox" />
-          <span class="toggle-track"><i /></span>
-          <span>Play chords</span>
-        </label>
+        <div class="panel-actions">
+          <label class="source-toggle">
+            <input v-model="chordsEnabled" type="checkbox" />
+            <span class="toggle-track"><i /></span>
+            <span>Play chords</span>
+          </label>
+          <label class="velocity-control harmony-velocity-control">
+            <span class="control-caption">HARMONY VELOCITY <strong>{{ harmonyVelocityLevel }}/5</strong></span>
+            <input v-model.number="harmonyVelocityLevel" type="range" min="1" max="5" step="1" class="velocity-slider harmony-slider" />
+          </label>
+        </div>
       </div>
       <div class="chords-row">
         <ChordBlock
@@ -61,17 +67,21 @@
     </section>
 
     <section class="melody-panel" :class="{ enabled: melodyEnabled }">
-      <div class="melody-heading">
+      <div class="panel-heading">
         <div>
           <p class="control-caption">MELODY</p>
           <h2>Melody generator</h2>
           <p class="melody-description">Generate a deterministic melody for each chord.</p>
         </div>
-        <div class="melody-heading-actions">
+        <div class="panel-actions">
           <label class="source-toggle melody-source-toggle">
             <input v-model="melodyEnabled" type="checkbox" />
             <span class="toggle-track"><i /></span>
             <span>Play melody</span>
+          </label>
+          <label class="velocity-control">
+            <span class="control-caption">MELODY VELOCITY <strong>{{ melodyVelocityLevel }}/5</strong></span>
+            <input v-model.number="melodyVelocityLevel" type="range" min="1" max="5" step="1" class="velocity-slider melody-velocity-slider" />
           </label>
           <div class="melody-indicator">
             <span class="melody-light" />
@@ -135,6 +145,7 @@ import { useSound } from '../api/sound-toggle';
 import { playChordWithMelody } from '../api/audio';
 import { chordTupleToNotes } from '../api/chord-builder';
 import { generateMelody, type MelodyRegister, type MelodyScale, type MelodySettings } from '../api/melody';
+import { playBrowserChordWithMelody, stopBrowserMidiPlayback } from '../api/midi';
 
 const defaultChords: ChordData[] = [
   [1, 4, 1, 0, false],   // Cm
@@ -164,6 +175,9 @@ const REGISTER_OPTIONS: { value: MelodyRegister; label: string; octaves: string 
 ];
 
 const melodyEnabled = ref(false);
+const VELOCITY_LEVELS = [24, 48, 72, 96, 120];
+const harmonyVelocityLevel = ref(4);
+const melodyVelocityLevel = ref(4);
 const melodyScale = ref<MelodyScale>('chord');
 const melodyKey = ref(1);
 const melodyNotesPerChord = ref(2);
@@ -186,6 +200,8 @@ const melodySettings = computed<MelodySettings>(() => {
 const playback = computed<PlaybackSettings>(() => ({
   chords: chordsEnabled.value,
   melody: melodyEnabled.value,
+  harmonyVelocity: VELOCITY_LEVELS[harmonyVelocityLevel.value - 1] ?? VELOCITY_LEVELS[3],
+  melodyVelocity: VELOCITY_LEVELS[melodyVelocityLevel.value - 1] ?? VELOCITY_LEVELS[3],
 }));
 const hasPlayableSource = computed(() => chordsEnabled.value || melodyEnabled.value);
 const playModeLabel = computed(() => {
@@ -224,6 +240,7 @@ function stopPolling() {
 
 onUnmounted(() => {
   stopPolling();
+  stopBrowserMidiPlayback();
   if (updateTimer) clearTimeout(updateTimer);
 });
 
@@ -244,6 +261,7 @@ watch(chords, queueProgressionUpdate, { deep: true });
 
 watch(chordsEnabled, queueProgressionUpdate);
 watch(bpm, queueProgressionUpdate);
+watch([harmonyVelocityLevel, melodyVelocityLevel], queueProgressionUpdate);
 
 watch([melodyEnabled, melodyScale, melodyKey, melodyNotesPerChord, melodyRegister], () => {
   // A restriction change is an explicit new idea; chord edits keep using this
@@ -262,12 +280,35 @@ watch(currentChord, (idx) => {
       ? generateMelody(chords.value, melodySettings.value)[idx] ?? []
       : [];
     const interval = 60 / bpm.value / 0.5;
-    playChordWithMelody(notes, melody, interval);
+    playChordWithMelody(
+      notes,
+      melody,
+      interval,
+      playback.value.harmonyVelocity,
+      playback.value.melodyVelocity,
+    );
+  }
+  if (idx >= 0 && idx < chords.value.length) {
+    const tuple = chords.value[idx];
+    const notes = !chordsEnabled.value || tuple[4] ? [] : chordTupleToNotes(tuple);
+    const melody = melodySettings.value.enabled
+      ? generateMelody(chords.value, melodySettings.value)[idx] ?? []
+      : [];
+    playBrowserChordWithMelody(
+      notes,
+      melody,
+      60 / bpm.value / 0.5,
+      playback.value.harmonyVelocity,
+      playback.value.melodyVelocity,
+    );
   }
 });
 
 watch(running, (val) => {
-  if (!val) lastPlayedChord = -1;
+  if (!val) {
+    lastPlayedChord = -1;
+    stopBrowserMidiPlayback();
+  }
 });
 
 function addChord() {
@@ -553,6 +594,14 @@ function generateNewMelody() {
   gap: 1rem;
 }
 
+.panel-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
 .panel-heading h2 {
   margin-top: 0.35rem;
   font-size: 1.6rem;
@@ -606,34 +655,39 @@ function generateNewMelody() {
   background: linear-gradient(110deg, #1b211e, var(--surface));
 }
 
-.melody-heading,
 .melody-controls {
   display: flex;
   align-items: center;
   gap: 1.25rem;
 }
 
-.melody-heading {
-  justify-content: space-between;
-}
-
-.melody-heading-actions {
+.velocity-control {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 0.7rem;
-  min-width: max-content;
+  gap: 0.35rem;
+  min-width: 7rem;
+  color: var(--muted);
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
 }
 
-.melody-heading h2 {
-  margin-top: 0.35rem;
-  font-size: 1.6rem;
-  letter-spacing: -0.06em;
-}
-
-.melody-heading h2 em {
+.velocity-control strong {
+  float: right;
   color: var(--acid);
-  font-style: normal;
+}
+
+.velocity-slider {
+  width: 7rem;
+  accent-color: var(--acid);
+}
+
+.harmony-slider {
+  accent-color: var(--coral);
+}
+
+.harmony-velocity-control strong {
+  color: var(--coral);
 }
 
 .melody-description {
@@ -834,17 +888,13 @@ function generateNewMelody() {
 @media (max-width: 700px) {
   .page-heading,
   .controls,
-  .melody-heading {
+  .panel-heading {
     align-items: flex-start;
     flex-direction: column;
   }
 
   .melody-indicator {
     align-self: flex-start;
-  }
-
-  .melody-heading-actions {
-    align-items: flex-start;
   }
 
   .lab-grid {
@@ -854,6 +904,11 @@ function generateNewMelody() {
   .panel-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .panel-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
   }
 
   .generate-btn {

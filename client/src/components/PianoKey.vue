@@ -1,22 +1,29 @@
 <template>
   <button
     class="piano-key"
-    :class="{ black: isBlack, pressed }"
+    :class="{ black: isBlack, pressed: pressed || inputPressed, 'midi-input-flash': inputFlash }"
+    :aria-label="`${label}, MIDI ${midiNote}`"
+    :title="`${label} · MIDI ${midiNote}`"
     @mousedown="pressKey"
     @mouseup="releaseKey"
     @mouseleave="releaseKey"
     @touchstart.prevent="pressKey"
     @touchend.prevent="releaseKey"
   >
-    <span v-if="!isBlack" class="key-label">{{ label }}</span>
   </button>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { playNote } from '../api/client';
 import { playTone } from '../api/audio';
 import { useSound } from '../api/sound-toggle';
+import {
+  hasSelectedBrowserMidiOutput,
+  onBrowserMidiNote,
+  sendBrowserNoteOff,
+  sendBrowserNoteOn,
+} from '../api/midi';
 
 const props = defineProps<{
   midiNote: number;
@@ -25,18 +32,63 @@ const props = defineProps<{
 }>();
 
 const pressed = ref(false);
+const inputPressed = ref(false);
+const inputFlash = ref(false);
 const soundOn = useSound();
+let flashTimer: number | null = null;
+let removeInputListener: (() => void) | null = null;
 
-function pressKey() {
+onMounted(() => {
+  removeInputListener = onBrowserMidiNote((note, velocity) => {
+    if (note !== props.midiNote) return;
+    if (velocity === 0) {
+      inputPressed.value = false;
+      return;
+    }
+
+    inputPressed.value = true;
+    inputFlash.value = false;
+    window.requestAnimationFrame(() => {
+      inputFlash.value = true;
+    });
+    if (flashTimer) window.clearTimeout(flashTimer);
+    flashTimer = window.setTimeout(() => {
+      inputFlash.value = false;
+      flashTimer = null;
+    }, 220);
+  });
+});
+
+onUnmounted(() => {
+  removeInputListener?.();
+  if (flashTimer) window.clearTimeout(flashTimer);
+});
+
+function velocityFromEvent(event: MouseEvent | TouchEvent): number {
+  const target = event.currentTarget;
+  if (!(target instanceof HTMLElement)) return 100;
+  const rect = target.getBoundingClientRect();
+  const pointY = 'touches' in event
+    ? event.touches[0]?.clientY ?? rect.top + rect.height
+    : event.clientY;
+  const verticalPosition = Math.max(0, Math.min(1, (pointY - rect.top) / rect.height));
+  return Math.round(20 + verticalPosition * 107);
+}
+
+function pressKey(event: MouseEvent | TouchEvent) {
   pressed.value = true;
+  const velocity = velocityFromEvent(event);
   if (soundOn.value) {
-    playTone(props.midiNote);
+    playTone(props.midiNote, 0.3, velocity);
   }
-  playNote(props.midiNote).catch(() => {});
+  if (!sendBrowserNoteOn(props.midiNote, velocity)) {
+    playNote(props.midiNote, velocity).catch(() => {});
+  }
 }
 
 function releaseKey() {
   pressed.value = false;
+  if (hasSelectedBrowserMidiOutput()) sendBrowserNoteOff(props.midiNote);
 }
 </script>
 
@@ -100,15 +152,16 @@ function releaseKey() {
   box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.16);
 }
 
-.key-label {
-  position: absolute;
-  bottom: 0.65rem;
-  left: 0;
-  width: 100%;
-  color: inherit;
-  font-size: 0.55rem;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  opacity: 0.65;
+.piano-key.midi-input-flash {
+  animation: midi-input-flash 220ms ease-out;
+}
+
+@keyframes midi-input-flash {
+  0% {
+    filter: brightness(1.8);
+  }
+  100% {
+    filter: brightness(1);
+  }
 }
 </style>

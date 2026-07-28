@@ -9,16 +9,17 @@ export const KEY_TO_NOTE_NAME: Record<number, string> = Object.fromEntries(
   Object.entries(NOTE_NAME_TO_KEY).map(([k, v]) => [v, k])
 );
 
+/** Convert a standard MIDI octave and C-based pitch-class offset to a MIDI number. */
 export function noteToMidi(octave: number, semitoneOffset: number): number {
-  return 21 + (octave - 1) * 12 + semitoneOffset;
+  return 12 * (octave + 1) + semitoneOffset;
 }
 
 export function midiToOctave(midi: number): number {
-  return Math.floor((midi - 21) / 12) + 1;
+  return Math.floor(midi / 12) - 1;
 }
 
 export function midiToSemitone(midi: number): number {
-  return (midi - 21) % 12;
+  return midi % 12;
 }
 
 export function midiToNoteName(midi: number): string {

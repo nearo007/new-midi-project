@@ -11,14 +11,31 @@ export class JzzAdapter implements MidiOutput {
   private port: JzzPort | null = null;
   private portName = '';
   private portNames: string[] = [];
+  private engineName = 'none';
+  private initializationError = '';
 
   async init(): Promise<void> {
     try {
       this.engine = await JZZ();
+      const info = this.engine.info();
+      this.engineName = info.engine ?? 'none';
+      if (this.engineName === 'none') {
+        this.engine = null;
+        this.initializationError = process.platform === 'linux'
+          ? 'Native MIDI is unavailable. Install ALSA (libasound2) or use the browser MIDI output.'
+          : 'Native MIDI is unavailable. Use a browser MIDI output or install the platform MIDI backend.';
+        return;
+      }
       this.refreshPorts();
-    } catch {
-      console.warn('JZZ engine not available');
+    } catch (err) {
+      this.engine = null;
+      this.initializationError = err instanceof Error ? err.message : String(err);
+      console.warn(`JZZ MIDI engine not available: ${this.initializationError}`);
     }
+  }
+
+  status(): { engine: string; error?: string } {
+    return { engine: this.engineName, ...(this.initializationError ? { error: this.initializationError } : {}) };
   }
 
   private refreshPorts(): void {

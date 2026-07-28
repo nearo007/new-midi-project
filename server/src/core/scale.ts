@@ -24,7 +24,7 @@ export function getScaleNotes(
   if (register) {
     const scale: number[] = [];
     for (let oct = register[0]; oct <= register[1]; oct++) {
-      let current = 23 + key;
+      let current = 22 + key;
       for (const step of steps) {
         current += step;
         scale.push(current + (oct - 1) * 12);
@@ -36,7 +36,7 @@ export function getScaleNotes(
     return scale;
   }
 
-  let current = 23 + key;
+  let current = 22 + key;
   const scale: number[] = [];
   for (const step of steps) {
     current += step;

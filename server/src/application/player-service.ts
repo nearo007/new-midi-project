@@ -9,7 +9,9 @@ function sleep(ms: number): Promise<void> {
 export interface SequenceEntry {
   notes: number[];
   muted: boolean;
+  velocity?: number;
   melodyNotes?: number[];
+  melodyVelocity?: number;
 }
 
 export class PlayerService {
@@ -90,7 +92,7 @@ export class PlayerService {
     const melodyNotes = entry.melodyNotes ?? [];
 
     if (!entry.muted) {
-      for (const note of entry.notes) chordTokens.push(this.noteOn(note));
+      for (const note of entry.notes) chordTokens.push(this.noteOn(note, entry.velocity ?? 100));
     }
 
     if (melodyNotes.length > 0) {
@@ -101,7 +103,7 @@ export class PlayerService {
 
       for (const [index, note] of melodyNotes.entries()) {
         if (!this.playing || runId !== this.loopRunId) break;
-        const token = this.noteOn(note, 88);
+        const token = this.noteOn(note, entry.melodyVelocity ?? 88);
         melodyTokens.push(token);
         await this.waitUntil(windowStart + (index * slotDuration + melodyDuration) * 1000, runId);
         this.noteOff(token);
@@ -125,16 +127,14 @@ export class PlayerService {
     const silenceDuration = calcSilenceDuration(interval, noteDuration);
 
     for (const entry of sequence) {
-      if (!this.playing) break;
       const tokens: number[] = [];
       if (!entry.muted) {
-        for (const note of entry.notes) tokens.push(this.noteOn(note));
+        for (const note of entry.notes) tokens.push(this.noteOn(note, entry.velocity ?? 100));
       }
       await sleep(noteDuration * 1000);
       this.releaseTokens(tokens);
       await sleep(silenceDuration * 1000);
     }
-    this.playing = false;
   }
 
   async loopSequence(sequence: SequenceEntry[]): Promise<void> {

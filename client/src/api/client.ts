@@ -3,6 +3,8 @@ import type { MelodySettings } from './melody';
 export interface PlaybackSettings {
   chords: boolean;
   melody: boolean;
+  harmonyVelocity: number;
+  melodyVelocity: number;
 }
 
 const BASE = '/api';
@@ -19,14 +21,14 @@ async function fetchJSON<T = unknown>(url: string, options?: RequestInit): Promi
   return res.json() as Promise<T>;
 }
 
-export async function playNote(keyNum: number): Promise<void> {
+export async function playNote(keyNum: number, velocity = 100): Promise<void> {
   await fetchJSON('/play', {
     method: 'POST',
-    body: JSON.stringify({ keyNum }),
+    body: JSON.stringify({ keyNum, velocity }),
   });
 }
 
-export async function getPorts(): Promise<{ ports: string[]; current: string }> {
+export async function getPorts(): Promise<{ ports: string[]; current: string; engine?: string; error?: string }> {
   return fetchJSON('/ports');
 }
 
@@ -35,6 +37,10 @@ export async function setPort(port: string): Promise<void> {
     method: 'POST',
     body: JSON.stringify({ port }),
   });
+}
+
+export async function clearPort(): Promise<void> {
+  await fetchJSON('/clear-port', { method: 'POST' });
 }
 
 export type ChordTuple = [number, number, number, number, boolean];
