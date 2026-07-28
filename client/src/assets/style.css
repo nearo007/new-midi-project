@@ -6,6 +6,14 @@
   padding: 0;
 }
 
+@font-face {
+  font-family: 'Minecraft';
+  src: url('./fonts/Minecraft.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   color-scheme: dark;
   --canvas: #0f1114;
@@ -101,7 +109,7 @@ html[data-theme='violet'] {
   --text: #f7edff;
   --muted: #b5a1c7;
   --acid: #caa2ff;
-  --coral: #ff78c8;
+  --coral: #78ffae;
   --header: #180f26;
   --on-accent: #211431;
   --accent-line: #8064aa;
@@ -112,23 +120,45 @@ html[data-theme='violet'] {
   --paper-edge: #d3bddc;
 }
 
+html[data-theme='earth'] {
+  --canvas: #11170e;
+  --surface: #1c2617;
+  --surface-raised: #29351f;
+  --surface-soft: #36452a;
+  --line: #4b5f38;
+  --line-strong: #6c8150;
+  --text: #eef3d9;
+  --muted: #aab995;
+  --acid: #67c23a;
+  --coral: #9a6239;
+  --header: #0d120b;
+  --on-accent: #10200b;
+  --accent-line: #46872d;
+  --accent-soft: #2e4826;
+  --scroll-track: #0a0f08;
+  --font-ui: 'Minecraft', 'Press Start 2P', 'Pixelify Sans', 'Courier New', monospace;
+  --letter-spacing-ui: 0.06em;
+  --paper: #f1f5dc;
+  --paper-edge: #bdc9a5;
+}
+
 html[data-theme='paper'] {
-  color-scheme: light;
-  --canvas: #eee8dc;
-  --surface: #fffaf0;
-  --surface-raised: #f7f0e4;
-  --surface-soft: #ebe1d2;
-  --line: #d0c2b1;
-  --line-strong: #ad9d89;
-  --text: #2b2925;
-  --muted: #756b60;
-  --acid: #bd5a20;
-  --coral: #147c78;
-  --header: #e3d8c8;
-  --on-accent: #fff8ed;
-  --accent-line: #9a4921;
-  --accent-soft: #ead4c8;
-  --scroll-track: #d8cdbc;
+  color-scheme: dark;
+  --canvas: #17110e;
+  --surface: #241a15;
+  --surface-raised: #30231b;
+  --surface-soft: #3d2d23;
+  --line: #594337;
+  --line-strong: #795d49;
+  --text: #f3e4d0;
+  --muted: #b9a28a;
+  --acid: #e6b85c;
+  --coral: #e06f5f;
+  --header: #110c0a;
+  --on-accent: #28190b;
+  --accent-line: #a87932;
+  --accent-soft: #4b3025;
+  --scroll-track: #0f0a08;
   --font-ui: 'Courier New', Courier, monospace;
   --paper: #fffdf7;
   --paper-edge: #b9ab98;
@@ -140,10 +170,16 @@ html, body {
 
 body {
   font-family: var(--font-ui);
+  letter-spacing: var(--letter-spacing-ui, normal);
   background: var(--canvas);
   color: var(--text);
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
+}
+
+html[data-theme='earth'] .title,
+html[data-theme='earth'] .panel-heading h2 {
+  letter-spacing: var(--letter-spacing-ui);
 }
 
 button,

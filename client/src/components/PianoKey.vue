@@ -123,7 +123,7 @@ function releaseKey() {
 
 .piano-key:not(.black).pressed {
   background-color: var(--acid);
-  border-color: #b3d43a;
+  border-color: var(--acid);
   color: #171b11;
   transform: translateY(3px);
   box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.08);
@@ -147,7 +147,7 @@ function releaseKey() {
 
 .piano-key.black.pressed {
   background-color: var(--coral);
-  border-color: #d55e4b;
+  border-color: var(--coral);
   transform: translateY(3px);
   box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.16);
 }

@@ -26,6 +26,10 @@
             aria-label="Choose theme"
             @click="themeMenuOpen = !themeMenuOpen"
           >
+            <span class="theme-button-swatch" aria-hidden="true">
+              <i :style="{ background: activeTheme.accent }" />
+              <i :style="{ background: activeTheme.secondary }" />
+            </span>
             <span class="hamburger" aria-hidden="true"><i /><i /><i /></span>
             <span>Theme</span>
           </button>
@@ -62,7 +66,7 @@
 
 <script setup lang="ts">
 import PortSelector from './PortSelector.vue';
-import { onMounted, onUnmounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import { resumeAudio } from '../api/audio';
 import { useSound, setSoundEnabled } from '../api/sound-toggle';
 
@@ -75,11 +79,13 @@ const THEME_OPTIONS = [
   { id: 'ocean', label: 'Ocean', description: 'Cyan / amber', accent: '#54e8ff', secondary: '#ffc46b' },
   { id: 'sunset', label: 'Sunset', description: 'Gold / pink', accent: '#ffd166', secondary: '#ff5d8f' },
   { id: 'forest', label: 'Forest', description: 'Mint / peach', accent: '#70f0c4', secondary: '#ff9c6e' },
-  { id: 'violet', label: 'Violet', description: 'Lavender / pink', accent: '#caa2ff', secondary: '#ff78c8' },
-  { id: 'paper', label: 'Paper', description: 'Orange / teal', accent: '#bd5a20', secondary: '#147c78' },
+  { id: 'violet', label: 'Violet', description: 'Lavender / pink', accent: '#caa2ff', secondary: '#78ffae' },
+  { id: 'earth', label: 'Earth', description: 'Grass / dirt', accent: '#67c23a', secondary: '#9a6239' },
+  { id: 'paper', label: 'Paper', description: 'Gold / terracotta', accent: '#e6b85c', secondary: '#e06f5f' },
 ] as const;
 
 type ThemeId = (typeof THEME_OPTIONS)[number]['id'];
+const activeTheme = computed(() => THEME_OPTIONS.find((option) => option.id === theme.value) ?? THEME_OPTIONS[0]);
 
 function applyTheme(value: ThemeId) {
   document.documentElement.dataset.theme = value;
@@ -292,6 +298,19 @@ onUnmounted(() => {
   width: 100%;
   height: 1px;
   background: currentColor;
+}
+
+.theme-button-swatch {
+  display: flex;
+  width: 0.8rem;
+  height: 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+}
+
+.theme-button-swatch i {
+  flex: 1;
 }
 
 .theme-menu {
