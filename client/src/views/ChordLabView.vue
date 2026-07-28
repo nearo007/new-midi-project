@@ -2,13 +2,13 @@
   <div class="chord-lab-view">
     <section class="page-heading">
       <div>
-        <p class="eyebrow">02 / COMPOSITION</p>
-        <h1 class="title">Build a <em>sequence.</em></h1>
-        <p class="subtitle">Arrange harmonic ideas, set the pulse, and let the loop find its shape.</p>
+        <p class="eyebrow">02 / CHORD LAB</p>
+        <h1 class="title">Chord <em>Lab.</em></h1>
+        <p class="subtitle">Create a chord progression and optionally add a generated melody.</p>
       </div>
       <div class="sequence-count">
         <strong>{{ chords.length.toString().padStart(2, '0') }}</strong>
-        <span>CHORD<br />SLOTS</span>
+        <span>CHORDS</span>
       </div>
     </section>
 
@@ -33,8 +33,8 @@
     <section class="chords-panel" :class="{ enabled: chordsEnabled }">
       <div class="panel-heading">
         <div>
-          <p class="control-caption">CHORD FOUNDATION</p>
-          <h2>Build the <em>shape.</em></h2>
+          <p class="control-caption">CHORDS</p>
+          <h2>Chord progression</h2>
         </div>
         <label class="source-toggle">
           <input v-model="chordsEnabled" type="checkbox" />
@@ -63,9 +63,9 @@
     <section class="melody-panel" :class="{ enabled: melodyEnabled }">
       <div class="melody-heading">
         <div>
-          <p class="control-caption">MELODY LAB</p>
-          <h2>Let it <em>wander.</em></h2>
-          <p class="melody-description">A tiny seeded melody that follows each chord and changes at the next loop step.</p>
+          <p class="control-caption">MELODY</p>
+          <h2>Melody generator</h2>
+          <p class="melody-description">Generate a deterministic melody for each chord.</p>
         </div>
         <div class="melody-heading-actions">
           <label class="source-toggle melody-source-toggle">
