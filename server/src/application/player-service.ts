@@ -17,6 +17,8 @@ export class PlayerService {
   private playing = false;
   private loopTimeout: ReturnType<typeof setTimeout> | null = null;
   private _currentChordIndex = -1;
+  private activeLoopSequence: SequenceEntry[] | null = null;
+  private loopRunId = 0;
 
   constructor(midi: MidiOutput, config: Config) {
     this.midi = midi;
@@ -68,37 +70,55 @@ export class PlayerService {
 
   async loopSequence(sequence: SequenceEntry[]): Promise<void> {
     this.stopLoop();
-    await sleep(100);
 
+    const runId = this.loopRunId;
+    this.activeLoopSequence = sequence;
     this.playing = true;
     const interval = calcInterval(this.config.loopBpm, this.config.timeSignature);
     const noteDuration = calcNoteDuration(interval, this.config.loopStaccato);
     const silenceDuration = calcSilenceDuration(interval, noteDuration);
+    let sequenceIndex = 0;
 
-    while (this.playing) {
-      for (let i = 0; i < sequence.length; i++) {
-        if (!this.playing) break;
-        const entry = sequence[i];
-        this._currentChordIndex = i;
-        if (!entry.muted) {
-          for (const note of entry.notes) {
-            this.midi.sendNoteOn(note, 100);
-          }
+    while (this.playing && runId === this.loopRunId) {
+      const activeSequence = this.activeLoopSequence;
+      if (!activeSequence || activeSequence.length === 0) break;
+      if (sequenceIndex >= activeSequence.length) sequenceIndex = 0;
+
+      const entry = activeSequence[sequenceIndex];
+      this._currentChordIndex = sequenceIndex;
+      sequenceIndex += 1;
+
+      if (!entry.muted) {
+        for (const note of entry.notes) {
+          this.midi.sendNoteOn(note, 100);
         }
-        await sleep(noteDuration * 1000);
-        if (!entry.muted) {
-          for (const note of entry.notes) {
-            this.midi.sendNoteOff(note);
-          }
-        }
-        await sleep(silenceDuration * 1000);
       }
+      await sleep(noteDuration * 1000);
+      if (!entry.muted) {
+        for (const note of entry.notes) {
+          this.midi.sendNoteOff(note);
+        }
+      }
+      await sleep(silenceDuration * 1000);
     }
-    this._currentChordIndex = -1;
+
+    if (runId === this.loopRunId) {
+      this.playing = false;
+      this.activeLoopSequence = null;
+      this._currentChordIndex = -1;
+    }
+  }
+
+  updateLoopSequence(sequence: SequenceEntry[]): boolean {
+    if (!this.playing) return false;
+    this.activeLoopSequence = sequence;
+    return true;
   }
 
   stopLoop(): void {
     this.playing = false;
+    this.loopRunId += 1;
+    this.activeLoopSequence = null;
     this._currentChordIndex = -1;
     if (this.loopTimeout) {
       clearTimeout(this.loopTimeout);

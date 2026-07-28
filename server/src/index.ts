@@ -9,6 +9,9 @@ import { chordLabRouter } from "./routes/chord-lab.js";
 import { portRouter } from "./routes/port.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const isDevelopment = process.env.NODE_ENV === "development";
+const clientRoot = path.resolve(__dirname, "../../client");
+const clientDist = path.join(clientRoot, "dist");
 
 const midi = new JzzAdapter();
 await midi.init();
@@ -30,11 +33,27 @@ app.use("/api", playRouter(player));
 app.use("/api/chord-lab", chordLabRouter(player, midi));
 app.use("/api", portRouter(midi, player));
 
-const clientDist = path.resolve(__dirname, "../../client/dist");
-app.use(express.static(clientDist));
-app.get("*", (req, res) => {
-    res.sendFile(path.join(clientDist, "index.html"));
+// API routes must never fall through to the SPA entrypoint. This keeps API
+// errors machine-readable when a client requests an unknown endpoint.
+app.use("/api", (_req, res) => {
+    res.status(404).json({ error: "API route not found" });
 });
+
+if (isDevelopment) {
+    const { createServer: createViteServer } = await import("vite");
+    const vite = await createViteServer({
+        root: clientRoot,
+        server: { middlewareMode: true },
+        appType: "spa",
+    });
+
+    app.use(vite.middlewares);
+} else {
+    app.use(express.static(clientDist));
+    app.get("*", (_req, res) => {
+        res.sendFile(path.join(clientDist, "index.html"));
+    });
+}
 
 app.use(
     (
@@ -52,4 +71,3 @@ const PORT = parseInt(process.env.PORT ?? "3000", 10);
 app.listen(PORT, () => {
     console.log(`MIDI Toolbox server running on http://localhost:${PORT}`);
 });
-

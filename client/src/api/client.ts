@@ -43,6 +43,13 @@ export async function stopProgression(): Promise<void> {
   });
 }
 
+export async function updateProgression(chords: (number | boolean)[][]): Promise<void> {
+  await fetchJSON('/chord-lab/progression', {
+    method: 'PUT',
+    body: JSON.stringify({ chords }),
+  });
+}
+
 export async function getProgressionStatus(): Promise<{ playing: boolean; currentChord: number }> {
   return fetchJSON('/chord-lab/status');
 }

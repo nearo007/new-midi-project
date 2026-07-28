@@ -11,6 +11,18 @@ const SEVENTH_MAP: Record<number, SeventhType> = { 0: 'none', 1: 'maj7', 2: 'min
 
 type ChordTuple = [number, number, number, number, boolean];
 
+function buildSequence(chords: ChordTuple[]): SequenceEntry[] {
+  return chords.map(([noteKey, octave, tonality, seventh, muted]) => {
+    const scale = getScaleNotes('chromatic', noteKey, octave);
+    const notes = getChord(
+      scale,
+      TONALITY_MAP[tonality] ?? 'major',
+      SEVENTH_MAP[seventh] ?? 'none',
+    );
+    return { notes, muted: muted ?? false };
+  });
+}
+
 export function chordLabRouter(player: PlayerService, midi: JzzAdapter) {
   const router = Router();
 
@@ -29,17 +41,23 @@ export function chordLabRouter(player: PlayerService, midi: JzzAdapter) {
       player.setLoopBpm(bpm);
     }
 
-    const sequence: SequenceEntry[] = chords.map(([noteKey, octave, tonality, seventh, muted]) => {
-      const scale = getScaleNotes('chromatic', noteKey, octave);
-      const notes = getChord(
-        scale,
-        TONALITY_MAP[tonality] ?? 'major',
-        SEVENTH_MAP[seventh] ?? 'none',
-      );
-      return { notes, muted: muted ?? false };
-    });
+    player.loopSequence(buildSequence(chords));
+    res.json({ ok: true });
+  });
 
-    player.loopSequence(sequence);
+  router.put('/progression', (req, res) => {
+    const { chords } = req.body as { chords: ChordTuple[] };
+
+    if (!Array.isArray(chords) || chords.length === 0) {
+      res.status(400).json({ error: 'chords must be a non-empty array' });
+      return;
+    }
+
+    if (!player.updateLoopSequence(buildSequence(chords))) {
+      res.status(409).json({ error: 'No progression is currently playing' });
+      return;
+    }
+
     res.json({ ok: true });
   });
 

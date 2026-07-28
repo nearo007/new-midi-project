@@ -135,12 +135,14 @@ const displayName = computed(() => {
   flex-direction: column;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.75rem;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  min-width: 100px;
-  transition: opacity 0.2s, filter 0.2s;
+  padding: 0.9rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--line-strong);
+  border-radius: 3px;
+  min-width: 116px;
+  min-height: 220px;
+  transition: opacity 0.2s, filter 0.2s, border-color 0.2s, transform 0.2s;
   cursor: default;
 }
 
@@ -151,17 +153,18 @@ const displayName = computed(() => {
 
 .chord-block.dragging {
   opacity: 0.5;
-  border-color: rgba(168, 85, 247, 0.6);
+  border-color: var(--acid);
 }
 
 .chord-block.active {
-  border-color: rgba(168, 85, 247, 0.8);
-  box-shadow: 0 0 12px rgba(168, 85, 247, 0.4), inset 0 0 8px rgba(168, 85, 247, 0.1);
+  border-top-color: var(--acid);
+  box-shadow: 0 8px 0 rgba(216, 255, 85, 0.08);
+  transform: translateY(-3px);
 }
 
 .drag-handle {
   cursor: grab;
-  color: rgba(255, 255, 255, 0.25);
+  color: #606873;
   font-size: 0.9rem;
   letter-spacing: 2px;
   user-select: none;
@@ -173,25 +176,26 @@ const displayName = computed(() => {
 }
 
 .chord-name {
-  font-size: 1.2rem;
+  font-size: 1.6rem;
   font-weight: 700;
-  color: #fff;
-  margin-bottom: 0.25rem;
+  color: var(--text);
+  letter-spacing: -0.06em;
+  margin: 0.2rem 0 0.35rem;
 }
 
 .chord-select {
   width: 100%;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-  padding: 0.3rem;
-  font-size: 0.85rem;
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 0.38rem;
+  font-size: 0.72rem;
 }
 
 .chord-select option {
-  background: #1a0030;
-  color: #fff;
+  background: var(--surface-raised);
+  color: var(--text);
 }
 
 .seventh-group {
@@ -200,8 +204,8 @@ const displayName = computed(() => {
 }
 
 .seventh-check {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 0.8rem;
+  color: var(--muted);
+  font-size: 0.68rem;
   cursor: pointer;
 }
 
@@ -216,9 +220,9 @@ const displayName = computed(() => {
 }
 
 .mute-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: 3px;
   cursor: pointer;
   font-size: 0.85rem;
   padding: 0.15rem 0.4rem;
@@ -227,24 +231,24 @@ const displayName = computed(() => {
 }
 
 .mute-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--surface-soft);
 }
 
 .mute-btn.active {
-  background: rgba(255, 255, 255, 0.15);
+  background: #2d3035;
 }
 
 .remove-btn {
-  background: rgba(255, 80, 80, 0.2);
-  color: #ff6666;
-  border: 1px solid rgba(255, 80, 80, 0.3);
-  border-radius: 4px;
+  background: transparent;
+  color: var(--coral);
+  border: 1px solid #713b35;
+  border-radius: 3px;
   cursor: pointer;
   font-size: 0.8rem;
   padding: 0.15rem 0.5rem;
 }
 
 .remove-btn:hover {
-  background: rgba(255, 80, 80, 0.4);
+  background: rgba(255, 118, 95, 0.15);
 }
 </style>

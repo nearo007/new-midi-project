@@ -221,11 +221,18 @@ interface MidiOutput {
 ## Build & Run
 
 ```bash
-# Development
-cd server && npm run dev     # Express on :3000
-cd client && npm run dev     # Vite on :5173 (proxies to :3000)
+# Install dependencies
+npm install
 
-# Production
-cd client && npm run build   # builds to dist/
-# Express serves client/dist/ as static files
+# Development — one Express process with Vite middleware and hot reload
+npm run dev
+
+# Production build and server — Express serves the Vue app and API
+npm run build
+npm start
 ```
+
+The integrated server listens on `http://localhost:3000`. Frontend API calls
+continue to use the `/api` prefix. The client workspace scripts remain
+available for standalone Vite usage, but are not required for the normal
+workflow.

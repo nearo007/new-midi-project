@@ -1,18 +1,32 @@
 <template>
   <div class="chord-lab-view">
-    <h1 class="title">Chord Lab</h1>
+    <section class="page-heading">
+      <div>
+        <p class="eyebrow">02 / COMPOSITION</p>
+        <h1 class="title">Build a <em>sequence.</em></h1>
+        <p class="subtitle">Arrange harmonic ideas, set the pulse, and let the loop find its shape.</p>
+      </div>
+      <div class="sequence-count">
+        <strong>{{ chords.length.toString().padStart(2, '0') }}</strong>
+        <span>CHORD<br />SLOTS</span>
+      </div>
+    </section>
 
     <div class="controls">
       <label class="bpm-label">
-        BPM: {{ bpm }}
+        <span class="control-caption">TEMPO</span>
+        <strong>{{ bpm }} <small>BPM</small></strong>
         <input type="range" v-model.number="bpm" min="20" max="240" class="bpm-slider" />
       </label>
-      <button class="ctrl-btn start" @click="handleStart" :disabled="running">
-        Start
-      </button>
-      <button class="ctrl-btn stop" @click="handleStop" :disabled="!running">
-        Stop
-      </button>
+      <div class="transport">
+        <span class="transport-status" :class="{ active: running }"><i /> {{ running ? 'Looping' : 'Ready' }}</span>
+        <button class="ctrl-btn start" @click="handleStart" :disabled="running">
+          Start loop <span>↗</span>
+        </button>
+        <button class="ctrl-btn stop" @click="handleStop" :disabled="!running">
+          Stop
+        </button>
+      </div>
     </div>
 
     <div class="chords-row">
@@ -38,7 +52,7 @@
 import { ref, onUnmounted, watch } from 'vue';
 import ChordBlock from '../components/ChordBlock.vue';
 import type { ChordData } from '../components/ChordBlock.vue';
-import { startProgression, stopProgression, getProgressionStatus } from '../api/client';
+import { startProgression, updateProgression, stopProgression, getProgressionStatus } from '../api/client';
 import { useSound } from '../api/sound-toggle';
 import { playChord } from '../api/audio';
 import { chordTupleToNotes } from '../api/chord-builder';
@@ -58,6 +72,7 @@ const soundOn = useSound();
 
 let dragIndex = -1;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+let updateTimer: ReturnType<typeof setTimeout> | null = null;
 let lastPlayedChord = -1;
 
 function startPolling() {
@@ -84,7 +99,23 @@ function stopPolling() {
   }
 }
 
-onUnmounted(stopPolling);
+onUnmounted(() => {
+  stopPolling();
+  if (updateTimer) clearTimeout(updateTimer);
+});
+
+watch(chords, () => {
+  if (!running.value) return;
+  if (updateTimer) clearTimeout(updateTimer);
+  updateTimer = setTimeout(async () => {
+    updateTimer = null;
+    try {
+      await updateProgression(chords.value);
+    } catch {
+      // The loop may have stopped between the edit and the update request.
+    }
+  }, 80);
+}, { deep: true });
 
 watch(currentChord, (idx) => {
   if (idx === -1 || idx === lastPlayedChord) return;
@@ -156,62 +187,178 @@ async function handleStop() {
 .chord-lab-view {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
+  gap: clamp(2rem, 5vw, 4rem);
+  width: 100%;
+}
+
+.page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+}
+
+.eyebrow {
+  color: var(--coral);
+  font-size: 0.65rem;
+  font-weight: 850;
+  letter-spacing: 0.16em;
 }
 
 .title {
-  color: #fff;
-  font-size: 1.5rem;
+  color: var(--text);
+  font-size: clamp(2.7rem, 7vw, 6.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.08em;
+  margin: 0.65rem 0 1rem;
+}
+
+.title em {
+  color: var(--coral);
+  font-style: normal;
+}
+
+.subtitle {
+  color: var(--muted);
+  font-size: 0.95rem;
+  max-width: 29rem;
+  line-height: 1.6;
+}
+
+.sequence-count {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: var(--muted);
+  border-left: 1px solid var(--line-strong);
+  padding: 0.75rem 0 0.75rem 1rem;
+  font-size: 0.58rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+}
+
+.sequence-count strong {
+  color: var(--text);
+  font-size: 2.5rem;
+  line-height: 1;
+  letter-spacing: -0.08em;
 }
 
 .controls {
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1.5rem;
+  padding: 1rem 1.2rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 
 .bpm-label {
-  color: rgba(255, 255, 255, 0.8);
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 0.65rem;
+  min-width: min(100%, 22rem);
+  color: var(--text);
   font-size: 0.9rem;
+}
+
+.control-caption {
+  color: var(--muted);
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+}
+
+.bpm-label strong {
+  font-size: 1.1rem;
+}
+
+.bpm-label small {
+  color: var(--muted);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+}
+
+.bpm-label input {
+  grid-column: 1 / -1;
+  margin-top: 0.7rem;
+}
+
+.transport {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.transport-status {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.transport-status i {
+  display: inline-block;
+  width: 0.45rem;
+  height: 0.45rem;
+  margin-right: 0.3rem;
+  border-radius: 50%;
+  background: var(--line-strong);
+}
+
+.transport-status.active {
+  color: var(--acid);
+}
+
+.transport-status.active i {
+  background: var(--acid);
+  box-shadow: 0 0 0 3px rgba(216, 255, 85, 0.12);
 }
 
 .bpm-slider {
-  width: 120px;
-  accent-color: #a855f7;
+  width: 180px;
+  accent-color: var(--coral);
 }
 
 .ctrl-btn {
-  padding: 0.5rem 1.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 6px;
+  padding: 0.65rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
   cursor: pointer;
-  font-weight: 600;
-  font-size: 0.9rem;
-  transition: background 0.2s;
+  font-weight: 800;
+  font-size: 0.72rem;
+  transition: background 0.2s, transform 0.2s, opacity 0.2s;
 }
 
 .ctrl-btn.start {
-  background: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-  border-color: rgba(34, 197, 94, 0.3);
+  background: var(--coral);
+  color: #21100c;
+  border-color: var(--coral);
 }
 
 .ctrl-btn.start:hover:not(:disabled) {
-  background: rgba(34, 197, 94, 0.35);
+  background: #ff8b78;
+  transform: translateY(-1px);
+}
+
+.ctrl-btn.start span {
+  margin-left: 0.4rem;
+  font-size: 0.9rem;
 }
 
 .ctrl-btn.stop {
-  background: rgba(239, 68, 68, 0.2);
-  color: #f87171;
-  border-color: rgba(239, 68, 68, 0.3);
+  background: transparent;
+  color: var(--muted);
 }
 
 .ctrl-btn.stop:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.35);
+  color: var(--text);
+  background: var(--surface-soft);
 }
 
 .ctrl-btn:disabled {
@@ -222,29 +369,48 @@ async function handleStop() {
 .chords-row {
   display: flex;
   align-items: flex-start;
-  gap: 0.75rem;
+  gap: 1rem;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .add-btn {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.6);
-  border: 1px dashed rgba(255, 255, 255, 0.2);
+  width: 116px;
+  min-height: 220px;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px dashed var(--line-strong);
   font-size: 1.5rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-top: 2rem;
-  transition: background 0.2s;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
 }
 
 .add-btn:hover {
-  background: rgba(255, 255, 255, 0.15);
-  color: #fff;
+  background: var(--surface-raised);
+  border-color: var(--acid);
+  color: var(--acid);
+}
+
+@media (max-width: 700px) {
+  .page-heading,
+  .controls {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .sequence-count {
+    border-left: 0;
+    border-top: 1px solid var(--line-strong);
+    width: 100%;
+    padding: 1rem 0 0;
+  }
+
+  .transport {
+    justify-content: flex-start;
+  }
 }
 </style>
