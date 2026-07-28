@@ -9,6 +9,7 @@ function sleep(ms: number): Promise<void> {
 export interface SequenceEntry {
   notes: number[];
   muted: boolean;
+  melodyNotes?: number[];
 }
 
 export class PlayerService {
@@ -19,6 +20,8 @@ export class PlayerService {
   private _currentChordIndex = -1;
   private activeLoopSequence: SequenceEntry[] | null = null;
   private loopRunId = 0;
+  private nextNoteToken = 1;
+  private activeNoteTokens = new Map<number, number>();
 
   constructor(midi: MidiOutput, config: Config) {
     this.midi = midi;
@@ -45,6 +48,77 @@ export class PlayerService {
     return this._currentChordIndex;
   }
 
+  private noteOn(note: number, velocity = 100): number {
+    const token = this.nextNoteToken++;
+    this.activeNoteTokens.set(token, note);
+    this.midi.sendNoteOn(note, velocity);
+    return token;
+  }
+
+  private noteOff(token: number): void {
+    const note = this.activeNoteTokens.get(token);
+    if (note === undefined) return;
+    this.activeNoteTokens.delete(token);
+    this.midi.sendNoteOff(note);
+  }
+
+  private releaseTokens(tokens: number[]): void {
+    for (const token of tokens) this.noteOff(token);
+  }
+
+  private releaseAllNotes(): void {
+    const tokens = [...this.activeNoteTokens.keys()];
+    this.releaseTokens(tokens);
+  }
+
+  private async waitUntil(deadline: number, runId: number): Promise<void> {
+    while (this.playing && runId === this.loopRunId) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      await sleep(Math.min(remaining, 10));
+    }
+  }
+
+  private async playLoopEntry(
+    entry: SequenceEntry,
+    noteDuration: number,
+    runId: number,
+    windowStart: number,
+  ): Promise<void> {
+    const chordTokens: number[] = [];
+    const melodyTokens: number[] = [];
+    const melodyNotes = entry.melodyNotes ?? [];
+
+    if (!entry.muted) {
+      for (const note of entry.notes) chordTokens.push(this.noteOn(note));
+    }
+
+    if (melodyNotes.length > 0) {
+      // Divide the chord's active window into melodic slots. A small rest at
+      // the end of each slot keeps the line distinct from a sustained chord.
+      const slotDuration = noteDuration / melodyNotes.length;
+      const melodyDuration = slotDuration * 0.72;
+
+      for (const [index, note] of melodyNotes.entries()) {
+        if (!this.playing || runId !== this.loopRunId) break;
+        const token = this.noteOn(note, 88);
+        melodyTokens.push(token);
+        await this.waitUntil(windowStart + (index * slotDuration + melodyDuration) * 1000, runId);
+        this.noteOff(token);
+        await this.waitUntil(windowStart + ((index + 1) * slotDuration) * 1000, runId);
+      }
+
+      // If a loop was stopped during the final rest, there is no extra wait
+      // needed here: all melody tokens have already been released.
+    } else {
+      await this.waitUntil(windowStart + noteDuration * 1000, runId);
+    }
+
+    this.releaseTokens(melodyTokens);
+    this.releaseTokens(chordTokens);
+
+  }
+
   async playSequence(sequence: SequenceEntry[]): Promise<void> {
     const interval = calcInterval(this.config.bpm, this.config.timeSignature);
     const noteDuration = calcNoteDuration(interval, this.config.staccato);
@@ -52,17 +126,12 @@ export class PlayerService {
 
     for (const entry of sequence) {
       if (!this.playing) break;
+      const tokens: number[] = [];
       if (!entry.muted) {
-        for (const note of entry.notes) {
-          this.midi.sendNoteOn(note, 100);
-        }
+        for (const note of entry.notes) tokens.push(this.noteOn(note));
       }
       await sleep(noteDuration * 1000);
-      if (!entry.muted) {
-        for (const note of entry.notes) {
-          this.midi.sendNoteOff(note);
-        }
-      }
+      this.releaseTokens(tokens);
       await sleep(silenceDuration * 1000);
     }
     this.playing = false;
@@ -74,10 +143,8 @@ export class PlayerService {
     const runId = this.loopRunId;
     this.activeLoopSequence = sequence;
     this.playing = true;
-    const interval = calcInterval(this.config.loopBpm, this.config.timeSignature);
-    const noteDuration = calcNoteDuration(interval, this.config.loopStaccato);
-    const silenceDuration = calcSilenceDuration(interval, noteDuration);
     let sequenceIndex = 0;
+    let nextBoundary = Date.now();
 
     while (this.playing && runId === this.loopRunId) {
       const activeSequence = this.activeLoopSequence;
@@ -88,21 +155,23 @@ export class PlayerService {
       this._currentChordIndex = sequenceIndex;
       sequenceIndex += 1;
 
-      if (!entry.muted) {
-        for (const note of entry.notes) {
-          this.midi.sendNoteOn(note, 100);
-        }
-      }
-      await sleep(noteDuration * 1000);
-      if (!entry.muted) {
-        for (const note of entry.notes) {
-          this.midi.sendNoteOff(note);
-        }
-      }
-      await sleep(silenceDuration * 1000);
+      // Read the tempo at each chord boundary so a live BPM update changes
+      // the next step without interrupting the chord currently sounding.
+      const interval = calcInterval(this.config.loopBpm, this.config.timeSignature);
+      const noteDuration = calcNoteDuration(interval, this.config.loopStaccato);
+      const intervalMilliseconds = interval * 1000;
+      const boundary = nextBoundary;
+      await this.playLoopEntry(entry, noteDuration, runId, boundary);
+      nextBoundary = boundary + intervalMilliseconds;
+      // Keep the clock anchored to chord boundaries. If a heavily loaded
+      // process misses a whole beat, recover from the current time instead of
+      // trying to play a burst of overdue chords.
+      if (nextBoundary < Date.now() - intervalMilliseconds) nextBoundary = Date.now();
+      await this.waitUntil(nextBoundary, runId);
     }
 
     if (runId === this.loopRunId) {
+      this.releaseAllNotes();
       this.playing = false;
       this.activeLoopSequence = null;
       this._currentChordIndex = -1;
@@ -118,6 +187,7 @@ export class PlayerService {
   stopLoop(): void {
     this.playing = false;
     this.loopRunId += 1;
+    this.releaseAllNotes();
     this.activeLoopSequence = null;
     this._currentChordIndex = -1;
     if (this.loopTimeout) {

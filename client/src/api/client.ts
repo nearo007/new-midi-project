@@ -1,3 +1,10 @@
+import type { MelodySettings } from './melody';
+
+export interface PlaybackSettings {
+  chords: boolean;
+  melody: boolean;
+}
+
 const BASE = '/api';
 
 async function fetchJSON<T = unknown>(url: string, options?: RequestInit): Promise<T> {
@@ -30,10 +37,17 @@ export async function setPort(port: string): Promise<void> {
   });
 }
 
-export async function startProgression(chords: (number | boolean)[][], bpm?: number): Promise<void> {
+export type ChordTuple = [number, number, number, number, boolean];
+
+export async function startProgression(
+  chords: ChordTuple[],
+  bpm?: number,
+  melody?: MelodySettings,
+  playback?: PlaybackSettings,
+): Promise<void> {
   await fetchJSON('/chord-lab/start-progression', {
     method: 'POST',
-    body: JSON.stringify({ chords, bpm }),
+    body: JSON.stringify({ chords, bpm, melody, playback }),
   });
 }
 
@@ -43,10 +57,15 @@ export async function stopProgression(): Promise<void> {
   });
 }
 
-export async function updateProgression(chords: (number | boolean)[][]): Promise<void> {
+export async function updateProgression(
+  chords: ChordTuple[],
+  melody?: MelodySettings,
+  playback?: PlaybackSettings,
+  bpm?: number,
+): Promise<void> {
   await fetchJSON('/chord-lab/progression', {
     method: 'PUT',
-    body: JSON.stringify({ chords }),
+    body: JSON.stringify({ chords, bpm, melody, playback }),
   });
 }
 
