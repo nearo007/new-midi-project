@@ -13,10 +13,41 @@
         <router-link to="/chord-lab" class="nav-link"><span>02</span> Chord Lab</router-link>
       </nav>
       <div class="header-right">
-        <button class="sound-toggle" :class="{ on: soundOn }" @click="toggleSound">
-          <span class="sound-dot" />
-          {{ soundOn ? 'Sound on' : 'Sound off' }}
-        </button>
+        <div class="sound-picker" @click.stop>
+          <button
+            class="sound-button"
+            :class="{ active: soundMode !== 'none' }"
+            :aria-expanded="soundMenuOpen"
+            aria-haspopup="true"
+            aria-label="Choose sound"
+            @click="soundMenuOpen = !soundMenuOpen"
+          >
+            <span class="sound-dot" />
+            <span>{{ soundModeLabel }}</span>
+            <span class="hamburger" aria-hidden="true"><i /><i /><i /></span>
+          </button>
+          <div v-if="soundMenuOpen" class="sound-menu" role="menu">
+            <p class="theme-menu-title">SOUND ENGINE</p>
+            <button
+              v-for="option in SOUND_OPTIONS"
+              :key="option.id"
+              class="sound-option"
+              :class="{ active: soundMode === option.id }"
+              role="menuitemradio"
+              :aria-checked="soundMode === option.id"
+              @click="selectSoundMode(option.id)"
+            >
+              <span class="sound-option-copy">
+                <strong>{{ option.label }}</strong>
+                <small>{{ option.description }}</small>
+              </span>
+              <span v-if="soundMode === option.id" class="theme-check" aria-hidden="true">✓</span>
+            </button>
+            <button class="reverb-option" :class="{ active: reverbEnabled }" @click="toggleReverb">
+              <span>Reverb</span><strong>{{ reverbEnabled ? 'ON' : 'OFF' }}</strong>
+            </button>
+          </div>
+        </div>
         <PortSelector />
         <div class="theme-picker" @click.stop>
           <button
@@ -67,13 +98,22 @@
 <script setup lang="ts">
 import PortSelector from './PortSelector.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { resumeAudio } from '../api/audio';
-import { useSound, setSoundEnabled } from '../api/sound-toggle';
+import { reverbEnabled, resumeAudio, setReverbEnabled } from '../api/audio';
+import { setSoundMode, useSoundMode } from '../api/sound-toggle';
+import type { SoundMode } from '../api/settings';
 import { readStoredSettings, updateStoredSettings } from '../api/settings';
 
-const soundOn = useSound();
+const soundMode = useSoundMode();
+const soundMenuOpen = ref(false);
 const themeMenuOpen = ref(false);
 const theme = ref('default');
+
+const SOUND_OPTIONS: { id: SoundMode; label: string; description: string }[] = [
+  { id: 'piano', label: 'Piano', description: 'Sampled attack + body' },
+  { id: '8bit', label: '8-bit', description: 'Classic triangle oscillator' },
+  { id: 'none', label: 'None', description: 'Mute local app audio' },
+];
+const soundModeLabel = computed(() => SOUND_OPTIONS.find((option) => option.id === soundMode.value)?.label ?? 'Piano');
 
 const THEME_OPTIONS = [
   { id: 'default', label: 'Default', description: 'Acid / coral', accent: '#d8ff55', secondary: '#ff765f' },
@@ -102,18 +142,24 @@ function selectTheme(value: ThemeId) {
 
 function handleLayoutClick() {
   themeMenuOpen.value = false;
+  soundMenuOpen.value = false;
   void resumeAudio().catch(() => {});
 }
 
-function toggleSound() {
-  setSoundEnabled(!soundOn.value);
-  if (soundOn.value) {
+function selectSoundMode(value: SoundMode) {
+  setSoundMode(value);
+  soundMenuOpen.value = false;
+  if (value !== 'none') {
     void resumeAudio().catch(() => {});
   }
 }
 
+function toggleReverb() {
+  setReverbEnabled(!reverbEnabled.value);
+}
+
 function unlockAudio() {
-  if (soundOn.value) void resumeAudio().catch(() => {});
+  if (soundMode.value !== 'none') void resumeAudio().catch(() => {});
 }
 
 onMounted(() => {
@@ -232,15 +278,19 @@ onUnmounted(() => {
   gap: 0.75rem;
 }
 
-.sound-toggle {
+.sound-picker {
+  position: relative;
+}
+
+.sound-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.5rem;
   background: transparent;
   color: var(--muted);
   border: 1px solid var(--line);
-  border-radius: 999px;
-  padding: 0.45rem 0.75rem;
+  border-radius: 3px;
+  padding: 0.45rem 0.65rem;
   cursor: pointer;
   font-size: 0.75rem;
   transition: background 0.2s, color 0.2s, border-color 0.2s;
@@ -253,22 +303,97 @@ onUnmounted(() => {
   background: var(--muted);
 }
 
-.sound-toggle.on {
+.sound-button.active {
   color: var(--acid);
   border-color: var(--accent-line);
 }
 
-.sound-toggle:hover {
+.sound-button:hover,
+.sound-button[aria-expanded='true'] {
+  color: var(--text);
   background: var(--surface-raised);
+  border-color: var(--line-strong);
 }
 
-.sound-toggle.on:hover {
+.sound-button.active:hover {
   background: var(--accent-soft);
 }
 
-.sound-toggle.on .sound-dot {
+.sound-button.active .sound-dot {
   background: var(--acid);
   box-shadow: 0 0 0 3px rgba(216, 255, 85, 0.12);
+}
+
+.sound-menu {
+  position: absolute;
+  top: calc(100% + 0.65rem);
+  right: 0;
+  z-index: 120;
+  width: 220px;
+  padding: 0.55rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.25);
+}
+
+.sound-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 0.65rem;
+  padding: 0.55rem 0.5rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sound-option:hover,
+.sound-option.active {
+  background: var(--surface-soft);
+  border-color: var(--line);
+}
+
+.sound-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.sound-option-copy strong {
+  font-size: 0.72rem;
+}
+
+.sound-option-copy small {
+  color: var(--muted);
+  font-size: 0.58rem;
+}
+
+.reverb-option {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 0.45rem;
+  padding: 0.6rem 0.5rem 0.35rem;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  cursor: pointer;
+  font-size: 0.68rem;
+  text-align: left;
+}
+
+.reverb-option.active {
+  color: var(--acid);
+}
+
+.reverb-option strong {
+  font-size: 0.58rem;
 }
 
 .theme-picker {

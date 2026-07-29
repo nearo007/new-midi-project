@@ -18,15 +18,9 @@ await midi.init();
 
 const player = new PlayerService(midi, { ...DEFAULT_CONFIG });
 
-try {
-    await midi.autoSelectPort();
-    console.log(`MIDI port opened: ${midi.currentPort()}`);
-} catch (err) {
-    console.warn("No MIDI port available. MIDI output disabled.");
-    const midiStatus = midi.status();
-    if (midiStatus.error) console.warn(`MIDI backend: ${midiStatus.error}`);
-    console.warn(err instanceof Error ? err.message : err);
-}
+const midiStatus = midi.status();
+if (midiStatus.error) console.warn(`MIDI backend: ${midiStatus.error}`);
+console.log("Native MIDI output starts disabled; choose a MIDI OUT device in the client.");
 
 const app = express();
 app.use(express.json());

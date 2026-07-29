@@ -24,7 +24,7 @@ export class PlayerService {
   private loopRunId = 0;
   private nextNoteToken = 1;
   private activeNoteTokens = new Map<number, number>();
-  private midiOutputEnabled = true;
+  private midiOutputEnabled = false;
 
   constructor(midi: MidiOutput, config: Config) {
     this.midi = midi;

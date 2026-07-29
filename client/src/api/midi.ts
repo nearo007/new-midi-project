@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import { startTone } from './audio';
+import { startTone, type ToneHandle } from './audio';
 import { readStoredSettings, updateStoredSettings } from './settings';
 
 export interface BrowserMidiOutput {
@@ -10,19 +10,22 @@ export interface BrowserMidiOutput {
   connection?: string;
 }
 
+export interface BrowserMidiInput extends BrowserMidiOutput {}
+
 let access: MIDIAccess | null = null;
 let selectedOutputId = '';
-let browserOutputDisabled = false;
+let selectedInputId = readStoredSettings().midiInputId ?? '';
 let stateChangeHandler: (() => void) | null = null;
 const storedSettings = readStoredSettings();
-export const midiInputEnabled = ref(storedSettings.midiInputEnabled ?? true);
-export const midiOutputEnabled = ref(storedSettings.midiOutputEnabled ?? true);
+const selectedRoute = ref(storedSettings.midiOutputId ?? '');
+export const midiInputEnabled = ref(Boolean(selectedInputId));
+export const midiOutputEnabled = ref(Boolean(selectedRoute.value));
 export const midiSustainDown = ref(false);
 export const midiLastControl = ref<{ controller: number; value: number } | null>(null);
 const midiNoteHandlers = new Set<(note: number, velocity: number) => void>();
 const inputHandlers = new Map<string, (event: MIDIMessageEvent) => void>();
-const inputToneStops = new Map<number, () => void>();
-const sustainedToneStops = new Map<number, () => void>();
+const inputToneStops = new Map<number, ToneHandle>();
+const sustainedToneStops = new Map<number, ToneHandle>();
 const activeNotes = new Map<number, number>();
 const scheduledTimers = new Set<number>();
 
@@ -30,6 +33,16 @@ function outputList(): BrowserMidiOutput[] {
   return access ? [...access.outputs.values()].map(({ id, name, manufacturer, state, connection }) => ({
     id,
     name: name || 'Unnamed MIDI output',
+    manufacturer: manufacturer ?? undefined,
+    state,
+    connection,
+  })) : [];
+}
+
+function inputList(): BrowserMidiInput[] {
+  return access ? [...access.inputs.values()].map(({ id, name, manufacturer, state, connection }) => ({
+    id,
+    name: name || 'Unnamed MIDI input',
     manufacturer: manufacturer ?? undefined,
     state,
     connection,
@@ -66,15 +79,16 @@ function schedule(callback: () => void, delay: number): void {
 }
 
 function stopInputTones(): void {
-  for (const stop of inputToneStops.values()) stop();
-  for (const stop of sustainedToneStops.values()) stop();
+  for (const tone of inputToneStops.values()) tone.stop();
+  for (const tone of sustainedToneStops.values()) tone.stop();
   inputToneStops.clear();
   sustainedToneStops.clear();
   midiSustainDown.value = false;
+  midiLastControl.value = null;
 }
 
 function releaseSustainedTones(): void {
-  for (const stop of sustainedToneStops.values()) stop();
+  for (const tone of sustainedToneStops.values()) tone.stop();
   sustainedToneStops.clear();
 }
 
@@ -89,62 +103,59 @@ function disconnectBrowserMidiInputs(): void {
 function configureBrowserMidiInputs(): void {
   if (!access) return;
 
-  for (const [id, handler] of inputHandlers) {
-    if (access.inputs.has(id)) continue;
-    const input = access.inputs.get(id);
-    if (input && input.onmidimessage === handler) input.onmidimessage = null;
-    inputHandlers.delete(id);
-  }
+  disconnectBrowserMidiInputs();
+  if (!midiInputEnabled.value || !selectedInputId) return;
 
-  if (!midiInputEnabled.value) {
-    disconnectBrowserMidiInputs();
+  const input = access.inputs.get(selectedInputId);
+  if (!input) {
+    clearBrowserMidiInput();
     return;
   }
 
-  access.inputs.forEach((input) => {
-    if (inputHandlers.has(input.id)) return;
-    const handler = (event: MIDIMessageEvent) => {
-      const data = event.data;
-      if (!data || data.length < 3) return;
-      const command = data[0] & 0xf0;
-      const note = data[1];
-      const velocity = data[2];
-      if (!midiInputEnabled.value) return;
+  const handler = (event: MIDIMessageEvent) => {
+    const data = event.data;
+    if (!data || data.length < 3 || !midiInputEnabled.value) return;
+    const command = data[0] & 0xf0;
+    const note = data[1];
+    const velocity = data[2];
 
-      if (command === 0xb0) {
-        midiLastControl.value = { controller: note, value: velocity };
-        // Standard MIDI CC #64 is the damper/sustain pedal.
-        if (note === 64) {
-          const sustainDown = velocity >= 64;
-          midiSustainDown.value = sustainDown;
-          if (!sustainDown) releaseSustainedTones();
-        }
-        return;
+    if (command === 0xb0) {
+      midiLastControl.value = { controller: note, value: velocity };
+      if (note === 64) {
+        const sustainDown = velocity >= 64;
+        midiSustainDown.value = sustainDown;
+        if (!sustainDown) releaseSustainedTones();
       }
+      return;
+    }
 
-      if (command !== 0x90 && command !== 0x80) return;
+    if (command !== 0x90 && command !== 0x80) return;
+    const noteOn = command === 0x90 && velocity > 0;
+    if (noteOn) {
+      sustainedToneStops.get(note)?.stop();
+      sustainedToneStops.delete(note);
+      inputToneStops.get(note)?.stop();
+      inputToneStops.set(note, startTone(note, velocity));
+    } else {
+      const stop = inputToneStops.get(note);
+      inputToneStops.delete(note);
+      if (midiSustainDown.value && stop) {
+        stop.release();
+        sustainedToneStops.set(note, stop);
+      } else stop?.stop();
+    }
 
-      const noteOn = command === 0x90 && velocity > 0;
-      if (noteOn) {
-        sustainedToneStops.get(note)?.();
-        sustainedToneStops.delete(note);
-        inputToneStops.get(note)?.();
-        inputToneStops.set(note, startTone(note, velocity));
-      } else {
-        const stop = inputToneStops.get(note);
-        inputToneStops.delete(note);
-        if (midiSustainDown.value && stop) sustainedToneStops.set(note, stop);
-        else stop?.();
-      }
+    for (const notify of midiNoteHandlers) notify(note, noteOn ? velocity : 0);
+  };
 
-      for (const notify of midiNoteHandlers) notify(note, noteOn ? velocity : 0);
-    };
-    inputHandlers.set(input.id, handler);
-    input.onmidimessage = handler;
-  });
+  inputHandlers.set(input.id, handler);
+  input.onmidimessage = handler;
 }
 
-export async function loadBrowserMidiOutputs(): Promise<BrowserMidiOutput[]> {
+export async function loadBrowserMidiDevices(): Promise<{
+  inputs: BrowserMidiInput[];
+  outputs: BrowserMidiOutput[];
+}> {
   if (typeof navigator === 'undefined' || !navigator.requestMIDIAccess) {
     throw new Error('Web MIDI is not supported by this browser. Use Chrome or Edge on localhost.');
   }
@@ -152,17 +163,27 @@ export async function loadBrowserMidiOutputs(): Promise<BrowserMidiOutput[]> {
   if (!access) {
     access = await navigator.requestMIDIAccess();
     access.onstatechange = () => {
+      if (selectedInputId && !access?.inputs.has(selectedInputId)) clearBrowserMidiInput();
+      if (selectedRoute.value.startsWith('browser:') && !access?.outputs.has(selectedOutputId)) clearMidiOutput();
       configureBrowserMidiInputs();
-      if (stateChangeHandler) stateChangeHandler();
+      stateChangeHandler?.();
     };
   }
 
-  configureBrowserMidiInputs();
-
-  if (!browserOutputDisabled && (!selectedOutputId || !access.outputs.has(selectedOutputId))) {
-    selectedOutputId = access.outputs.keys().next().value ?? '';
+  if (selectedRoute.value.startsWith('browser:')) {
+    selectedOutputId = selectedRoute.value.slice('browser:'.length);
+    if (!access.outputs.has(selectedOutputId)) clearMidiOutput();
   }
-  return outputList();
+  configureBrowserMidiInputs();
+  return { inputs: inputList(), outputs: outputList() };
+}
+
+export async function loadBrowserMidiOutputs(): Promise<BrowserMidiOutput[]> {
+  return (await loadBrowserMidiDevices()).outputs;
+}
+
+export async function loadBrowserMidiInputs(): Promise<BrowserMidiInput[]> {
+  return (await loadBrowserMidiDevices()).inputs;
 }
 
 export function onBrowserMidiStateChange(handler: () => void): () => void {
@@ -177,43 +198,97 @@ export function onBrowserMidiNote(handler: (note: number, velocity: number) => v
   return () => midiNoteHandlers.delete(handler);
 }
 
-export function setBrowserMidiInputEnabled(enabled: boolean): void {
-  midiInputEnabled.value = enabled;
-  updateStoredSettings({ midiInputEnabled: enabled });
-  if (!enabled) stopInputTones();
-  configureBrowserMidiInputs();
+export function selectedBrowserMidiInputId(): string {
+  return selectedInputId;
 }
 
-export function setBrowserMidiOutputEnabled(enabled: boolean): void {
-  if (!enabled) stopBrowserMidiPlayback();
-  midiOutputEnabled.value = enabled;
-  updateStoredSettings({ midiOutputEnabled: enabled });
+export function selectBrowserMidiInput(id: string): boolean {
+  if (!access?.inputs.has(id)) return false;
+  stopInputTones();
+  selectedInputId = id;
+  midiInputEnabled.value = true;
+  updateStoredSettings({ midiInputId: id, midiInputEnabled: true });
+  configureBrowserMidiInputs();
+  return true;
+}
+
+export function clearBrowserMidiInput(): void {
+  stopInputTones();
+  disconnectBrowserMidiInputs();
+  selectedInputId = '';
+  midiInputEnabled.value = false;
+  updateStoredSettings({ midiInputId: '', midiInputEnabled: false });
+}
+
+// Kept as a compatibility API for callers that used the former IN toggle.
+export function setBrowserMidiInputEnabled(enabled: boolean): void {
+  if (!enabled) clearBrowserMidiInput();
+  else {
+    midiInputEnabled.value = Boolean(selectedInputId);
+    updateStoredSettings({ midiInputEnabled: midiInputEnabled.value });
+    configureBrowserMidiInputs();
+  }
+}
+
+export function selectedMidiOutputId(): string {
+  return selectedRoute.value;
 }
 
 export function selectBrowserMidiOutput(id: string): boolean {
   if (!access?.outputs.has(id)) return false;
   stopBrowserMidiPlayback();
-  browserOutputDisabled = false;
   selectedOutputId = id;
+  selectedRoute.value = `browser:${id}`;
+  midiOutputEnabled.value = true;
+  updateStoredSettings({ midiOutputId: selectedRoute.value, midiOutputEnabled: true });
   return true;
 }
 
-export function clearBrowserMidiOutput(): void {
+export function selectNativeMidiOutput(port: string): void {
   stopBrowserMidiPlayback();
-  browserOutputDisabled = true;
   selectedOutputId = '';
+  selectedRoute.value = `server:${port}`;
+  midiOutputEnabled.value = true;
+  updateStoredSettings({ midiOutputId: selectedRoute.value, midiOutputEnabled: true });
+}
+
+export function clearMidiOutput(): void {
+  stopBrowserMidiPlayback();
+  selectedOutputId = '';
+  selectedRoute.value = '';
+  midiOutputEnabled.value = false;
+  updateStoredSettings({ midiOutputId: '', midiOutputEnabled: false });
+}
+
+// Compatibility API for integrations that still expose an output power
+// toggle. The selected device remains the source of truth for new callers.
+export function setBrowserMidiOutputEnabled(enabled: boolean): void {
+  if (!enabled) clearMidiOutput();
+  else if (selectedRoute.value) {
+    midiOutputEnabled.value = true;
+    updateStoredSettings({ midiOutputEnabled: true });
+  }
+}
+
+// Compatibility alias for the previous combined selector.
+export function clearBrowserMidiOutput(): void {
+  clearMidiOutput();
 }
 
 export function selectedBrowserMidiOutputId(): string {
-  return selectedOutputId;
+  return selectedRoute.value.startsWith('browser:') ? selectedOutputId : '';
 }
 
 export function hasSelectedBrowserMidiOutput(): boolean {
-  return selectedOutput() !== null;
+  return selectedRoute.value.startsWith('browser:') && selectedOutput() !== null;
+}
+
+export function hasSelectedNativeMidiOutput(): boolean {
+  return selectedRoute.value.startsWith('server:');
 }
 
 export function sendBrowserNoteOn(note: number, velocity = 100): boolean {
-  if (!midiOutputEnabled.value) return false;
+  if (!midiOutputEnabled.value || !hasSelectedBrowserMidiOutput()) return false;
   const sent = send([0x90, note, velocity]);
   if (sent) activeNotes.set(note, (activeNotes.get(note) ?? 0) + 1);
   return sent;

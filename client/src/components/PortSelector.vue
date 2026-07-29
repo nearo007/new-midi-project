@@ -1,60 +1,47 @@
 <template>
   <div class="port-selector">
-    <div class="midi-toggles" aria-label="MIDI controls">
-      <button
-        type="button"
-        class="midi-toggle"
-        :class="{ on: midiInputEnabled }"
-        :aria-pressed="midiInputEnabled"
-        @click="toggleMidiInput"
-      >
-        <i /> IN {{ midiInputEnabled ? 'ON' : 'OFF' }}
-      </button>
-      <button
-        type="button"
-        class="midi-toggle"
-        :class="{ on: midiOutputEnabled }"
-        :aria-pressed="midiOutputEnabled"
-        @click="toggleMidiOutput"
-      >
-        <i /> OUT {{ midiOutputEnabled ? 'ON' : 'OFF' }}
-      </button>
-      <button
-        type="button"
-        class="midi-toggle"
-        :class="{ on: reverbEnabled }"
-        :aria-pressed="reverbEnabled"
-        @click="toggleReverb"
-      >
-        <i /> REV {{ reverbEnabled ? 'ON' : 'OFF' }}
-      </button>
-    </div>
-    <span v-if="midiSustainDown" class="sustain-status" title="MIDI CC #64 · Sustain pedal down">
-      SUSTAIN ON
+    <label class="port-field">
+      <span class="port-label">MIDI IN</span>
+      <select v-model="selectedInput" class="port-select" @change="handleInputChange">
+        <option value="">None</option>
+        <option v-for="port in browserInputs" :key="port.id" :value="port.id">
+          {{ port.name }}
+        </option>
+      </select>
+    </label>
+
+    <label class="port-field">
+      <span class="port-label">MIDI OUT</span>
+      <select v-model="selectedOutput" class="port-select" @change="handleOutputChange">
+        <option value="">None</option>
+        <optgroup v-if="browserOutputs.length" label="Browser MIDI">
+          <option v-for="port in browserOutputs" :key="`browser:${port.id}`" :value="`browser:${port.id}`">
+            {{ port.name }}
+          </option>
+        </optgroup>
+        <optgroup v-if="serverPorts.length" label="Native MIDI">
+          <option v-for="port in serverPorts" :key="`server:${port}`" :value="`server:${port}`">
+            {{ port }}
+          </option>
+        </optgroup>
+      </select>
+    </label>
+
+    <span
+      class="sustain-status"
+      :class="{ active: midiSustainDown }"
+      :title="midiSustainDown ? 'MIDI CC #64 · Sustain pedal down' : 'MIDI CC #64 · Sustain pedal up'"
+    >
+      SUSTAIN {{ midiSustainDown ? 'ON' : 'OFF' }}
     </span>
-    <span v-else-if="midiLastControl && midiLastControl.controller !== 64" class="midi-control-status"
+    <span
+      v-if="midiLastControl && midiLastControl.controller !== 64"
+      class="midi-control-status"
       :title="`Incoming MIDI CC #${midiLastControl.controller} · Value ${midiLastControl.value}`"
     >
       CC {{ midiLastControl.controller }} {{ midiLastControl.value }}
     </span>
-    <span class="port-label">MIDI OUT</span>
-    <select v-model="selected" class="port-select">
-      <option value="" disabled>Select MIDI output...</option>
-      <optgroup v-if="browserPorts.length" label="Browser MIDI">
-        <option v-for="port in browserPorts" :key="`browser:${port.id}`" :value="`browser:${port.id}`">
-          {{ port.name }}
-        </option>
-      </optgroup>
-      <optgroup v-if="serverPorts.length" label="Server MIDI">
-        <option v-for="port in serverPorts" :key="`server:${port}`" :value="`server:${port}`">
-          {{ port }}
-        </option>
-      </optgroup>
-    </select>
-    <button class="port-btn" @click="handleSet" :disabled="!selected || selected === currentKey || loading">
-      Set
-    </button>
-    <button class="port-refresh" @click="loadPorts" :disabled="loading" title="Refresh MIDI outputs">
+    <button class="port-refresh" @click="loadPorts" :disabled="loading" title="Refresh MIDI devices">
       {{ loading ? '…' : '↻' }}
     </button>
     <span v-if="error" class="port-error" :title="error">{{ error }}</span>
@@ -62,138 +49,129 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue';
+import { onMounted, onUnmounted, ref } from 'vue';
 import { clearPort, getPorts, setPort, setServerMidiOutputEnabled } from '../api/client';
-import { reverbEnabled, setReverbEnabled } from '../api/audio';
 import {
-  loadBrowserMidiOutputs,
+  clearBrowserMidiInput,
+  clearMidiOutput,
+  loadBrowserMidiDevices,
   onBrowserMidiStateChange,
-  clearBrowserMidiOutput,
+  selectBrowserMidiInput,
   selectBrowserMidiOutput,
-  midiInputEnabled,
-  midiOutputEnabled,
+  selectNativeMidiOutput,
+  selectedBrowserMidiInputId,
+  selectedMidiOutputId,
   midiLastControl,
   midiSustainDown,
-  setBrowserMidiInputEnabled,
-  setBrowserMidiOutputEnabled,
+  type BrowserMidiInput,
   type BrowserMidiOutput,
 } from '../api/midi';
 
 const serverPorts = ref<string[]>([]);
-const browserPorts = ref<BrowserMidiOutput[]>([]);
-const selected = ref('');
-const currentKey = ref('');
-const current = ref('');
+const browserInputs = ref<BrowserMidiInput[]>([]);
+const browserOutputs = ref<BrowserMidiOutput[]>([]);
+const selectedInput = ref(selectedBrowserMidiInputId());
+const selectedOutput = ref(selectedMidiOutputId());
 const loading = ref(false);
 const error = ref('');
 
-function portLabel(key: string): string {
-  if (key.startsWith('browser:')) {
-    return browserPorts.value.find((port) => `browser:${port.id}` === key)?.name ?? key;
-  }
-  return key.replace(/^server:/, '');
-}
-
-async function loadPorts() {
-  loading.value = true;
-  error.value = '';
-  try {
-    const [serverResult, browserResult] = await Promise.allSettled([
-      getPorts(),
-      loadBrowserMidiOutputs(),
-    ]);
-
-    if (serverResult.status === 'fulfilled') {
-      serverPorts.value = serverResult.value.ports;
-      if (serverResult.value.error && !browserPorts.value.length) error.value = serverResult.value.error;
-    } else if (!browserPorts.value.length) {
-      error.value = 'MIDI server unavailable';
-    }
-
-    if (browserResult.status === 'fulfilled') {
-      browserPorts.value = browserResult.value;
-      if (browserPorts.value.length) error.value = '';
-    } else if (!serverPorts.value.length) {
-      error.value = browserResult.reason instanceof Error
-        ? browserResult.reason.message
-        : 'Unable to access browser MIDI';
-    }
-
-    const browserKey = browserPorts.value.length ? `browser:${browserPorts.value[0].id}` : '';
-    const serverKey = serverResult.status === 'fulfilled' && serverResult.value.current
-      ? `server:${serverResult.value.current}`
-      : '';
-    if (!selected.value || !availableKeys().includes(selected.value)) {
-      selected.value = serverKey || browserKey || (serverPorts.value[0] ? `server:${serverPorts.value[0]}` : '');
-    }
-    if (!currentKey.value || !availableKeys().includes(currentKey.value)) {
-      currentKey.value = selected.value;
-      current.value = portLabel(selected.value);
-    }
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Failed to load MIDI outputs';
-  } finally {
-    loading.value = false;
-  }
-}
-
-function availableKeys(): string[] {
+function availableOutputKeys(): string[] {
   return [
-    ...browserPorts.value.map((port) => `browser:${port.id}`),
+    ...browserOutputs.value.map((port) => `browser:${port.id}`),
     ...serverPorts.value.map((port) => `server:${port}`),
   ];
 }
 
-async function handleSet() {
-  if (!selected.value) return;
+async function loadPorts(): Promise<void> {
+  loading.value = true;
   error.value = '';
-  try {
-    if (selected.value.startsWith('browser:')) {
-      const id = selected.value.slice('browser:'.length);
-      await clearPort();
-      if (!selectBrowserMidiOutput(id)) throw new Error('The browser MIDI output is no longer available. Refresh the list.');
-    } else {
-      await setPort(selected.value.slice('server:'.length));
-      clearBrowserMidiOutput();
+  const [serverResult, browserResult] = await Promise.allSettled([getPorts(), loadBrowserMidiDevices()]);
+
+  if (serverResult.status === 'fulfilled') serverPorts.value = serverResult.value.ports;
+  if (browserResult.status === 'fulfilled') {
+    browserInputs.value = browserResult.value.inputs;
+    browserOutputs.value = browserResult.value.outputs;
+  }
+
+  if (browserResult.status === 'rejected' && serverResult.status === 'rejected') {
+    error.value = browserResult.reason instanceof Error
+      ? browserResult.reason.message
+      : 'Unable to access MIDI devices';
+  } else if (serverResult.status === 'rejected' && !browserOutputs.value.length) {
+    error.value = 'Native MIDI server unavailable';
+  }
+
+  if (selectedInput.value && !browserInputs.value.some((port) => port.id === selectedInput.value)) {
+    selectedInput.value = '';
+    clearBrowserMidiInput();
+  }
+
+  const savedOutput = selectedMidiOutputId();
+  if (savedOutput && availableOutputKeys().includes(savedOutput)) {
+    selectedOutput.value = savedOutput;
+    if (savedOutput.startsWith('server:') && serverResult.status === 'fulfilled') {
+      const port = savedOutput.slice('server:'.length);
+      try {
+        if (serverResult.value.current !== port) await setPort(port);
+        await setServerMidiOutputEnabled(true);
+      } catch {
+        clearMidiOutput();
+        selectedOutput.value = '';
+      }
     }
-    currentKey.value = selected.value;
-    current.value = portLabel(selected.value);
+  } else if (savedOutput) {
+    clearMidiOutput();
+    selectedOutput.value = '';
+  }
+
+  loading.value = false;
+}
+
+function handleInputChange(): void {
+  if (!selectedInput.value) clearBrowserMidiInput();
+  else if (!selectBrowserMidiInput(selectedInput.value)) {
+    selectedInput.value = '';
+    error.value = 'The selected MIDI input is no longer available.';
+  }
+}
+
+async function handleOutputChange(): Promise<void> {
+  error.value = '';
+  const route = selectedOutput.value;
+  try {
+    if (!route) {
+      clearMidiOutput();
+      try {
+        await clearPort();
+        await setServerMidiOutputEnabled(false);
+      } catch (err) {
+        error.value = err instanceof Error ? err.message : 'Native MIDI server unavailable';
+      }
+      return;
+    }
+
+    if (route.startsWith('browser:')) {
+      if (!selectBrowserMidiOutput(route.slice('browser:'.length))) throw new Error('Browser MIDI output is no longer available.');
+      try {
+        await clearPort();
+        await setServerMidiOutputEnabled(false);
+      } catch (err) {
+        error.value = err instanceof Error ? err.message : 'Native MIDI server unavailable';
+      }
+      return;
+    }
+
+    const port = route.slice('server:'.length);
+    await setPort(port);
+    await setServerMidiOutputEnabled(true);
+    selectNativeMidiOutput(port);
   } catch (err) {
     error.value = err instanceof Error ? err.message : 'Failed to select MIDI output';
+    selectedOutput.value = selectedMidiOutputId();
   }
 }
 
-function toggleMidiInput() {
-  setBrowserMidiInputEnabled(!midiInputEnabled.value);
-}
-
-function toggleReverb() {
-  setReverbEnabled(!reverbEnabled.value);
-}
-
-async function toggleMidiOutput() {
-  const previous = midiOutputEnabled.value;
-  const next = !previous;
-  setBrowserMidiOutputEnabled(next);
-  error.value = '';
-  try {
-    await setServerMidiOutputEnabled(next);
-  } catch (err) {
-    setBrowserMidiOutputEnabled(previous);
-    error.value = err instanceof Error ? err.message : 'Unable to update MIDI output';
-  }
-}
-
-onMounted(async () => {
-  await loadPorts();
-  if (!midiOutputEnabled.value) {
-    try {
-      await setServerMidiOutputEnabled(false);
-    } catch {
-      // Browser MIDI can still be controlled even if the native server is unavailable.
-    }
-  }
-});
+onMounted(loadPorts);
 const removeStateListener = onBrowserMidiStateChange(loadPorts);
 onUnmounted(removeStateListener);
 </script>
@@ -203,107 +181,65 @@ onUnmounted(removeStateListener);
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  min-width: 0;
 }
 
-.midi-toggles {
+.port-field {
   display: flex;
-  gap: 0.3rem;
-}
-
-.midi-toggle {
-  display: inline-flex;
   align-items: center;
-  gap: 0.3rem;
-  padding: 0.42rem 0.5rem;
-  color: var(--muted);
-  background: transparent;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  cursor: pointer;
-  font-size: 0.55rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.midi-toggle i {
-  width: 0.4rem;
-  height: 0.4rem;
-  border-radius: 50%;
-  background: var(--muted);
-}
-
-.midi-toggle.on {
-  color: var(--acid);
-  border-color: var(--accent-line);
-}
-
-.midi-toggle.on i {
-  background: var(--acid);
-}
-
-.sustain-status {
-  padding: 0.42rem 0.5rem;
-  color: var(--acid);
-  border: 1px solid var(--accent-line);
-  border-radius: 3px;
-  font-size: 0.55rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
-}
-
-.midi-control-status {
-  padding: 0.42rem 0.5rem;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  font-size: 0.55rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  white-space: nowrap;
+  gap: 0.35rem;
 }
 
 .port-label {
   color: #69717b;
-  font-size: 0.58rem;
+  font-size: 0.55rem;
   font-weight: 800;
-  letter-spacing: 0.12em;
+  letter-spacing: 0.1em;
+  white-space: nowrap;
 }
 
 .port-select {
-  max-width: 190px;
+  max-width: 160px;
   background: var(--surface-raised);
   color: var(--text);
   border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 0.45rem 0.55rem;
-  font-size: 0.75rem;
+  padding: 0.42rem 0.45rem;
+  font-size: 0.68rem;
 }
 
-.port-select option {
+.port-select option,
+.port-select optgroup {
   background: var(--surface-raised);
   color: var(--text);
 }
 
-.port-btn {
-  background: var(--acid);
-  color: var(--on-accent);
-  border: 1px solid var(--acid);
+.sustain-status,
+.midi-control-status {
+  padding: 0.42rem 0.45rem;
+  border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 0.45rem 0.75rem;
-  cursor: pointer;
-  font-size: 0.72rem;
+  color: var(--muted);
+  font-size: 0.52rem;
   font-weight: 800;
-  transition: opacity 0.2s, transform 0.2s;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
-.port-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
+.sustain-status {
+  display: inline-block;
+  width: 5.8rem;
+  text-align: center;
 }
 
-.port-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.sustain-status.active {
+  color: var(--acid);
+  border-color: var(--accent-line);
+}
+
+.midi-control-status {
+  color: var(--muted);
+  border-color: var(--line);
 }
 
 .port-refresh {
@@ -311,7 +247,7 @@ onUnmounted(removeStateListener);
   background: transparent;
   border: 1px solid var(--line);
   border-radius: 3px;
-  padding: 0.36rem 0.55rem;
+  padding: 0.34rem 0.5rem;
   cursor: pointer;
   font-size: 0.9rem;
 }
@@ -322,12 +258,17 @@ onUnmounted(removeStateListener);
 }
 
 .port-error {
-  max-width: 260px;
+  max-width: 180px;
   overflow: hidden;
   color: var(--coral);
-  font-size: 0.65rem;
-  line-height: 1.3;
+  font-size: 0.6rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .port-selector {
+    flex-wrap: wrap;
+  }
 }
 </style>

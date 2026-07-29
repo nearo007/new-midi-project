@@ -17,9 +17,9 @@
 import { onMounted, onUnmounted, ref } from 'vue';
 import { playNote } from '../api/client';
 import { playTone } from '../api/audio';
-import { useSound } from '../api/sound-toggle';
 import {
   hasSelectedBrowserMidiOutput,
+  hasSelectedNativeMidiOutput,
   midiOutputEnabled,
   onBrowserMidiNote,
   sendBrowserNoteOff,
@@ -35,7 +35,6 @@ const props = defineProps<{
 const pressed = ref(false);
 const inputPressed = ref(false);
 const inputFlash = ref(false);
-const soundOn = useSound();
 let flashTimer: number | null = null;
 let removeInputListener: (() => void) | null = null;
 
@@ -79,10 +78,8 @@ function velocityFromEvent(event: MouseEvent | TouchEvent): number {
 function pressKey(event: MouseEvent | TouchEvent) {
   pressed.value = true;
   const velocity = velocityFromEvent(event);
-  if (soundOn.value) {
-    playTone(props.midiNote, 0.3, velocity);
-  }
-  if (midiOutputEnabled.value && !sendBrowserNoteOn(props.midiNote, velocity)) {
+  playTone(props.midiNote, 0.3, velocity);
+  if (midiOutputEnabled.value && !sendBrowserNoteOn(props.midiNote, velocity) && hasSelectedNativeMidiOutput()) {
     playNote(props.midiNote, velocity).catch(() => {});
   }
 }

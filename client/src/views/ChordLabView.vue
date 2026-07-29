@@ -141,7 +141,6 @@ import {
   getProgressionStatus,
   type PlaybackSettings,
 } from '../api/client';
-import { useSound } from '../api/sound-toggle';
 import { playChordWithMelody } from '../api/audio';
 import { chordTupleToNotes } from '../api/chord-builder';
 import { generateMelody, type MelodyRegister, type MelodyScale, type MelodySettings } from '../api/melody';
@@ -177,7 +176,6 @@ const chords = ref<ChordData[]>(savedChords.length ? savedChords : defaultChords
 const bpm = ref(storedNumber(savedChordLab.bpm, 80, 20, 240));
 const running = ref(false);
 const currentChord = ref(-1);
-const soundOn = useSound();
 const chordsEnabled = ref(savedChordLab.chordsEnabled ?? true);
 
 const KEY_OPTIONS = [
@@ -319,7 +317,7 @@ watch([melodyEnabled, melodyScale, melodyKey, melodyNotesPerChord, melodyRegiste
 watch(currentChord, (idx) => {
   if (idx === -1 || idx === lastPlayedChord) return;
   lastPlayedChord = idx;
-  if (soundOn.value && idx >= 0 && idx < chords.value.length) {
+  if (idx >= 0 && idx < chords.value.length) {
     const tuple = chords.value[idx];
     const notes = !chordsEnabled.value || tuple[4] ? [] : chordTupleToNotes(tuple);
     const melody = melodySettings.value.enabled
