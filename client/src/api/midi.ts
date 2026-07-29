@@ -88,7 +88,10 @@ function stopInputTones(): void {
 }
 
 function releaseSustainedTones(): void {
-  for (const tone of sustainedToneStops.values()) tone.stop();
+  // A note released while the pedal is down must remain held. Begin its
+  // release only when the pedal comes back up; stopping here creates a sudden
+  // level change and makes the pedal itself click/pop.
+  for (const tone of sustainedToneStops.values()) tone.release();
   sustainedToneStops.clear();
 }
 
@@ -140,9 +143,9 @@ function configureBrowserMidiInputs(): void {
       const stop = inputToneStops.get(note);
       inputToneStops.delete(note);
       if (midiSustainDown.value && stop) {
-        stop.release();
+        // Keep the voice at its sustain level until CC64 is released.
         sustainedToneStops.set(note, stop);
-      } else stop?.stop();
+      } else stop?.release();
     }
 
     for (const notify of midiNoteHandlers) notify(note, noteOn ? velocity : 0);

@@ -11,7 +11,6 @@ let audioOutput: {
 } | null = null;
 const reverbEnabled = ref(readStoredSettings().reverbEnabled ?? false);
 const pianoBufferCache = new Map<number, Promise<AudioBuffer | null>>();
-const pianoBuffers = new Map<number, AudioBuffer>();
 const soundMode = useSoundMode();
 
 function getCtx(): AudioContext {
@@ -67,11 +66,16 @@ function getAudioOutput(ctx: AudioContext) {
 }
 
 watch(soundMode, (mode) => {
+  if (mode === 'piano') preloadPianoSamples();
   if (!audioOutput) return;
   const now = getCtx().currentTime;
   audioOutput.dry.gain.setTargetAtTime(mode === 'none' ? 0 : 1, now, 0.01);
   audioOutput.wet.gain.setTargetAtTime(mode === 'none' || !reverbEnabled.value ? 0 : 0.8, now, 0.01);
 });
+
+// Warm every register when Piano is the persisted/default sound mode so the
+// first note in each sample region does not pay the fetch/decode cost.
+if (soundMode.value === 'piano') preloadPianoSamples();
 
 export { reverbEnabled };
 
@@ -101,13 +105,6 @@ function holdGainAt(gain: GainNode, time: number): void {
     gain.gain.cancelScheduledValues(time);
     gain.gain.setValueAtTime(gain.gain.value, time);
   }
-}
-
-function decodeBase64(value: string): ArrayBuffer {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return bytes.buffer;
 }
 
 function decodePcmWav(ctx: AudioContext, wav: ArrayBuffer): AudioBuffer | null {
@@ -158,26 +155,30 @@ function sampleFor(midi: number) {
 
 function loadPianoBuffer(ctx: AudioContext, midi: number): Promise<AudioBuffer | null> {
   const sample = sampleFor(midi);
-  const ready = pianoBuffers.get(sample.midi);
-  if (ready) return Promise.resolve(ready);
   const cached = pianoBufferCache.get(sample.midi);
   if (cached) return cached;
 
-  const wav = decodeBase64(sample.wavBase64);
-  // The bundled asset is PCM, so parse it synchronously first. This matters
-  // for short MIDI notes: startTone must be able to create the sample voice
-  // before a quick note-off arrives.
-  const pcm = decodePcmWav(ctx, wav);
-  if (pcm) {
-    pianoBuffers.set(sample.midi, pcm);
-    const decoded = Promise.resolve(pcm);
-    pianoBufferCache.set(sample.midi, decoded);
-    return decoded;
-  }
-
-  const decoded = ctx.decodeAudioData(wav.slice(0)).catch(() => decodePcmWav(ctx, wav));
+  const decoded = fetch(sample.url)
+    .then((response) => {
+      if (!response.ok) throw new Error(`Unable to load piano sample (${response.status})`);
+      return response.arrayBuffer();
+    })
+    .then((wav) => {
+      // The bundled files are PCM WAVs, so parse them without relying on the
+      // browser's asynchronous decoder or its format support.
+      const pcm = decodePcmWav(ctx, wav);
+      if (pcm) return pcm;
+      return ctx.decodeAudioData(wav.slice(0)).catch(() => null);
+    })
+    .catch(() => null);
   pianoBufferCache.set(sample.midi, decoded);
   return decoded;
+}
+
+function preloadPianoSamples(): void {
+  if (soundMode.value !== 'piano') return;
+  const ctx = getCtx();
+  for (const sample of PIANO_SAMPLES) void loadPianoBuffer(ctx, sample.midi);
 }
 
 function scheduleSynthTone(
@@ -186,17 +187,13 @@ function scheduleSynthTone(
   start: number,
   duration: number,
   volume: number,
-  _mode: 'piano' | '8bit',
 ): void {
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
   const end = Math.max(start + 0.05, start + duration);
   const frequency = midiToFreq(midi);
 
-  // This is the shared synthesized fallback for Piano and the 8-bit option.
-  // Keeping one voice here guarantees both paths behave identically when a
-  // sample is unavailable.
-  osc.type = 'sine';
+  osc.type = 'triangle';
   osc.frequency.setValueAtTime(frequency, start);
   gain.gain.setValueAtTime(0.001, start);
   gain.gain.linearRampToValueAtTime(volume, start + 0.012);
@@ -209,17 +206,16 @@ function scheduleSynthTone(
   osc.stop(end + 0.02);
 }
 
-async function schedulePianoAttack(
+async function createPianoVoice(
   ctx: AudioContext,
   midi: number,
   start: number,
-  duration: number,
   volume: number,
-): Promise<void> {
+): Promise<{ source: AudioBufferSourceNode; gain: GainNode } | null> {
   const buffer = await loadPianoBuffer(ctx, midi);
   if (!buffer || ctx.state === 'closed') {
     setSoundMode('none');
-    return;
+    return null;
   }
 
   const source = ctx.createBufferSource();
@@ -227,29 +223,40 @@ async function schedulePianoAttack(
   const sample = sampleFor(midi);
   const playbackRate = Math.pow(2, (midi - sample.midi) / 12);
   const naturalDuration = buffer.duration / playbackRate;
-  const fadeDuration = Math.max(0.001, Math.min(0.08, naturalDuration * 0.75));
-  const sampleEnd = start + Math.max(0.0005, naturalDuration - fadeDuration);
+  // Loading a local asset still yields to a promise. Move the scheduled start
+  // into the future so automation is never written entirely in the past on
+  // the first piano note.
+  const scheduledStart = Math.max(start, ctx.currentTime + 0.005);
+  const attackDuration = Math.min(0.012, naturalDuration * 0.08);
+  const fadeDuration = Math.max(0.04, Math.min(0.12, naturalDuration * 0.2));
+  const sampleEnd = scheduledStart + Math.max(attackDuration, naturalDuration - fadeDuration);
   source.buffer = buffer;
-  source.playbackRate.setValueAtTime(playbackRate, start);
-  gain.gain.setValueAtTime(volume * 0.75, start);
+  source.playbackRate.setValueAtTime(playbackRate, scheduledStart);
+  gain.gain.setValueAtTime(0, scheduledStart);
+  gain.gain.linearRampToValueAtTime(volume * 0.75, scheduledStart + attackDuration);
   gain.gain.linearRampToValueAtTime(0, sampleEnd);
   source.connect(gain);
   connectVoice(gain, ctx);
-  source.start(start);
-  source.stop(start + naturalDuration + 0.02);
+  source.start(scheduledStart);
+  source.stop(scheduledStart + naturalDuration + 0.02);
+  return { source, gain };
+}
+
+function schedulePianoAttack(ctx: AudioContext, midi: number, start: number, volume: number): void {
+  void createPianoVoice(ctx, midi, start, volume);
 }
 
 function scheduleVoice(ctx: AudioContext, midi: number, start: number, duration: number, volume: number): void {
   const mode = useSoundMode().value;
   if (mode === 'none') return;
   if (mode === '8bit') {
-    scheduleSynthTone(ctx, midi, start, duration, volume, mode);
+    scheduleSynthTone(ctx, midi, start, duration, volume);
     return;
   }
 
   // Piano is sample-only. A failed load turns the option off instead of
   // silently changing its timbre to the synthesized 8-bit/fallback voice.
-  void schedulePianoAttack(ctx, midi, start, duration, volume * 1.08);
+  void schedulePianoAttack(ctx, midi, start, volume * 1.08);
 }
 
 function whenAudioReady(callback: (ctx: AudioContext) => void): void {
@@ -290,32 +297,25 @@ export function startTone(midi: number, velocity = 100): ToneHandle {
     const start = ctx.currentTime;
     const frequency = midiToFreq(midi);
     const mode = useSoundMode().value;
-    const oscillators: OscillatorNode[] = [];
+    const sources: AudioScheduledSourceNode[] = [];
     const gains: GainNode[] = [];
     const volume = 0.5 * velocity / 127;
     let toneStopped = false;
     let releaseApplied = false;
-
-    // Use the exact same attack scheduler as clicked keys. In Piano mode this
-    // starts the sample; if it cannot be decoded it uses the shared fallback.
-    // In 8-bit mode the same fallback is selected directly.
-    scheduleVoice(ctx, midi, start, 0.3, volume);
 
     const addOscillator = (type: OscillatorType, partial: number, level: number) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.type = type;
       osc.frequency.setValueAtTime(frequency * partial, start);
-      gain.gain.setValueAtTime(0.001, start);
-      gain.gain.linearRampToValueAtTime(volume * level, start + (mode === 'piano' ? 0.012 : 0.002));
+      gain.gain.setValueAtTime(0, start);
+      gain.gain.linearRampToValueAtTime(volume * level, start + 0.008);
       osc.connect(gain);
       connectVoice(gain, ctx);
       osc.start(start);
-      oscillators.push(osc);
+      sources.push(osc);
       gains.push(gain);
     };
-
-    if (mode === '8bit') addOscillator('sine', 1, 1);
 
     releaseTone = () => {
       if (toneStopped || releaseApplied) return;
@@ -328,7 +328,7 @@ export function startTone(midi: number, velocity = 100): ToneHandle {
       }
       // Let the decaying voice finish naturally; stop() below can still mute
       // it quickly when the pedal is lifted.
-      for (const osc of oscillators) osc.stop(releaseAt + releaseDuration + 0.2);
+      for (const source of sources) source.stop(releaseAt + releaseDuration + 0.2);
     };
 
     stopTone = () => {
@@ -341,9 +341,30 @@ export function startTone(midi: number, velocity = 100): ToneHandle {
         gain.gain.linearRampToValueAtTime(0, stopAt + stopFade);
       }
       if (!releaseApplied) {
-        for (const osc of oscillators) osc.stop(stopAt + stopFade + 0.2);
+        for (const source of sources) source.stop(stopAt + stopFade + 0.2);
       }
     };
+
+    if (mode === '8bit') {
+      // This is the complete 8-bit voice. Do not also call scheduleVoice()
+      // here: doing so creates a second, unmanaged oscillator with a separate
+      // 300 ms envelope that cannot follow sustain or note-off events.
+      addOscillator('triangle', 1, 1);
+    } else {
+      // A piano sample is asynchronous, so register its source and gain when
+      // it is ready. Note-off requests made while it loads are replayed below.
+      void createPianoVoice(ctx, midi, start, volume).then((voice) => {
+        if (!voice) return;
+        sources.push(voice.source);
+        gains.push(voice.gain);
+        if (toneStopped) {
+          const stopAt = ctx.currentTime;
+          holdGainAt(voice.gain, stopAt);
+          voice.gain.gain.linearRampToValueAtTime(0, stopAt + 0.4);
+          voice.source.stop(stopAt + 0.6);
+        } else if (releaseRequested) releaseTone?.();
+      });
+    }
 
     if (releaseRequested) releaseTone();
     if (stopRequested) stopTone();

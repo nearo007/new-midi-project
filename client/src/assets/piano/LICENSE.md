@@ -1,5 +1,11 @@
 # Piano sample license
 
-The short piano-like reference attack in `piano-samples.ts` is an original
-synthetic asset generated for MIDI Toolbox and dedicated to the public domain
-under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+The bundled C2, C4, and C6 recordings are trimmed and normalized from the
+University of Iowa Electronic Music Studios' Musical Instrument Samples piano
+recordings. The source collection states that its recordings may be downloaded
+and used in projects without restrictions:
+
+https://theremin.music.uiowa.edu/MIS.html
+
+The local WAV files are included so the application does not depend on the
+source website at runtime.

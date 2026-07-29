@@ -16,7 +16,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue';
 import { playNote } from '../api/client';
-import { playTone } from '../api/audio';
+import { startTone, type ToneHandle } from '../api/audio';
 import {
   hasSelectedBrowserMidiOutput,
   hasSelectedNativeMidiOutput,
@@ -37,6 +37,7 @@ const inputPressed = ref(false);
 const inputFlash = ref(false);
 let flashTimer: number | null = null;
 let removeInputListener: (() => void) | null = null;
+let localTone: ToneHandle | null = null;
 
 onMounted(() => {
   removeInputListener = onBrowserMidiNote((note, velocity) => {
@@ -60,6 +61,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  localTone?.stop();
+  localTone = null;
   removeInputListener?.();
   if (flashTimer) window.clearTimeout(flashTimer);
 });
@@ -78,7 +81,8 @@ function velocityFromEvent(event: MouseEvent | TouchEvent): number {
 function pressKey(event: MouseEvent | TouchEvent) {
   pressed.value = true;
   const velocity = velocityFromEvent(event);
-  playTone(props.midiNote, 0.3, velocity);
+  localTone?.stop();
+  localTone = startTone(props.midiNote, velocity);
   if (midiOutputEnabled.value && !sendBrowserNoteOn(props.midiNote, velocity) && hasSelectedNativeMidiOutput()) {
     playNote(props.midiNote, velocity).catch(() => {});
   }
@@ -86,6 +90,8 @@ function pressKey(event: MouseEvent | TouchEvent) {
 
 function releaseKey() {
   pressed.value = false;
+  localTone?.release();
+  localTone = null;
   if (midiOutputEnabled.value && hasSelectedBrowserMidiOutput()) sendBrowserNoteOff(props.midiNote);
 }
 </script>
