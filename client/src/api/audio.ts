@@ -44,12 +44,24 @@ function getAudioOutput(ctx: AudioContext) {
   const dry = ctx.createGain();
   const reverb = ctx.createConvolver();
   const wet = ctx.createGain();
+  const dcBlocker = ctx.createBiquadFilter();
+  const master = ctx.createDynamicsCompressor();
   reverb.buffer = createImpulse(ctx);
   dry.gain.value = soundMode.value === 'none' ? 0 : 1;
   wet.gain.value = reverbEnabled.value && soundMode.value !== 'none' ? 0.8 : 0;
-  dry.connect(ctx.destination);
+  dcBlocker.type = 'highpass';
+  dcBlocker.frequency.value = 20;
+  dcBlocker.Q.value = 0.7;
+  master.threshold.value = -18;
+  master.knee.value = 18;
+  master.ratio.value = 8;
+  master.attack.value = 0.003;
+  master.release.value = 0.25;
+  dry.connect(dcBlocker);
   reverb.connect(wet);
-  wet.connect(ctx.destination);
+  wet.connect(dcBlocker);
+  dcBlocker.connect(master);
+  master.connect(ctx.destination);
   audioOutput = { dry, reverb, wet };
   return audioOutput;
 }
@@ -77,6 +89,18 @@ function connectVoice(gain: GainNode, ctx: AudioContext): void {
   const output = getAudioOutput(ctx);
   gain.connect(output.dry);
   gain.connect(output.reverb);
+}
+
+function holdGainAt(gain: GainNode, time: number): void {
+  // Preserve the exact value of an in-flight envelope. Reading gain.value and
+  // writing it back can jump to the parameter's intrinsic value in browsers
+  // that are still rendering scheduled automation, which creates a click.
+  if (typeof gain.gain.cancelAndHoldAtTime === 'function') {
+    gain.gain.cancelAndHoldAtTime(time);
+  } else {
+    gain.gain.cancelScheduledValues(time);
+    gain.gain.setValueAtTime(gain.gain.value, time);
+  }
 }
 
 function decodeBase64(value: string): ArrayBuffer {
@@ -177,7 +201,7 @@ function scheduleSynthTone(
   gain.gain.setValueAtTime(0.001, start);
   gain.gain.linearRampToValueAtTime(volume, start + 0.012);
   gain.gain.exponentialRampToValueAtTime(Math.max(volume * 0.38, 0.001), start + 0.09);
-  gain.gain.exponentialRampToValueAtTime(0.001, end);
+  gain.gain.linearRampToValueAtTime(0, end);
 
   osc.connect(gain);
   connectVoice(gain, ctx);
@@ -201,14 +225,18 @@ async function schedulePianoAttack(
   const source = ctx.createBufferSource();
   const gain = ctx.createGain();
   const sample = sampleFor(midi);
+  const playbackRate = Math.pow(2, (midi - sample.midi) / 12);
+  const naturalDuration = buffer.duration / playbackRate;
+  const fadeDuration = Math.max(0.001, Math.min(0.08, naturalDuration * 0.75));
+  const sampleEnd = start + Math.max(0.0005, naturalDuration - fadeDuration);
   source.buffer = buffer;
-  source.playbackRate.setValueAtTime(Math.pow(2, (midi - sample.midi) / 12), start);
+  source.playbackRate.setValueAtTime(playbackRate, start);
   gain.gain.setValueAtTime(volume * 0.75, start);
-  gain.gain.exponentialRampToValueAtTime(0.001, start + Math.min(0.22, Math.max(0.04, buffer.duration)));
+  gain.gain.linearRampToValueAtTime(0, sampleEnd);
   source.connect(gain);
   connectVoice(gain, ctx);
   source.start(start);
-  source.stop(start + Math.max(0.05, Math.min(0.3, buffer.duration + 0.02)));
+  source.stop(start + naturalDuration + 0.02);
 }
 
 function scheduleVoice(ctx: AudioContext, midi: number, start: number, duration: number, volume: number): void {
@@ -295,27 +323,25 @@ export function startTone(midi: number, velocity = 100): ToneHandle {
       const releaseAt = ctx.currentTime;
       const releaseDuration = mode === 'piano' ? 2.2 : 1.8;
       for (const gain of gains) {
-        gain.gain.cancelScheduledValues(releaseAt);
-        gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.001), releaseAt);
-        gain.gain.exponentialRampToValueAtTime(0.001, releaseAt + releaseDuration);
+        holdGainAt(gain, releaseAt);
+        gain.gain.linearRampToValueAtTime(0, releaseAt + releaseDuration);
       }
       // Let the decaying voice finish naturally; stop() below can still mute
       // it quickly when the pedal is lifted.
-      for (const osc of oscillators) osc.stop(releaseAt + releaseDuration + 0.03);
+      for (const osc of oscillators) osc.stop(releaseAt + releaseDuration + 0.2);
     };
 
     stopTone = () => {
       if (toneStopped) return;
       toneStopped = true;
       const stopAt = ctx.currentTime;
-      const stopFade = mode === 'piano' ? 0.3 : 0.24;
+      const stopFade = mode === 'piano' ? 0.4 : 0.5;
       for (const gain of gains) {
-        gain.gain.cancelScheduledValues(stopAt);
-        gain.gain.setValueAtTime(Math.max(gain.gain.value, 0.001), stopAt);
-        gain.gain.exponentialRampToValueAtTime(0.0001, stopAt + stopFade);
+        holdGainAt(gain, stopAt);
+        gain.gain.linearRampToValueAtTime(0, stopAt + stopFade);
       }
       if (!releaseApplied) {
-        for (const osc of oscillators) osc.stop(stopAt + stopFade + 0.03);
+        for (const osc of oscillators) osc.stop(stopAt + stopFade + 0.2);
       }
     };
 
