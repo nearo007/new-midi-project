@@ -1,6 +1,6 @@
 # Piano sample license
 
-The bundled C2, C4, and C6 recordings are trimmed and normalized from the
+The bundled C1 through C8 recordings are trimmed and normalized from the
 University of Iowa Electronic Music Studios' Musical Instrument Samples piano
 recordings. The source collection states that its recordings may be downloaded
 and used in projects without restrictions:
