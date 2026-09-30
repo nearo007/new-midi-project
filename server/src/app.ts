@@ -32,7 +32,8 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
 };
 export function createApp(midi: MidiOutput, player = new PlayerService(midi)) {
   const app = express();
-  app.use(express.json({ limit: '256kb' }));
+  // Accommodate a 1 MiB project plus session/revision metadata.
+  app.use(express.json({ limit: 1024 * 1024 + 4096 }));
   app.get('/api/health', (_req, res) => res.json({ ok: true }));
   app.get('/api/ports', (_req, res) =>
     res.json({ ports: midi.listPorts(), current: midi.currentPort(), ...midi.status() }),
@@ -145,16 +146,18 @@ export function createApp(midi: MidiOutput, player = new PlayerService(midi)) {
       body.applyAt === undefined
         ? undefined
         : number(body.applyAt, 'applyAt', Date.now() - 1000, Date.now() + 10000, false),
+      playbackRun(body),
     );
     res.json({ ok: true });
   });
   app.post('/api/chord-lab/heartbeat', (req, res) => {
-    player.heartbeat(text(object(req.body, 'body').session, 'session'));
+    const body = object(req.body, 'body');
+    player.heartbeat(text(body.session, 'session'), playbackRun(body));
     res.json(player.status());
   });
   app.post('/api/chord-lab/stop-progression', (req, res) => {
     const body = object(req.body ?? {}, 'body');
-    player.stop(text(body.session ?? 'legacy', 'session'));
+    player.stop(text(body.session ?? 'legacy', 'session'), playbackRun(body));
     res.json({ ok: true });
   });
   app.get('/api/chord-lab/status', (_req, res) => res.json(player.status()));
@@ -176,4 +179,11 @@ export function createApp(midi: MidiOutput, player = new PlayerService(midi)) {
   );
   app.use(errorHandler);
   return { app, player };
+}
+
+function playbackRun(body: Record<string, unknown>): number | undefined {
+  // The original tuple API has no run identity; it remains isolated to its legacy owner.
+  if ((body.session === undefined || body.session === 'legacy') && body.runId === undefined)
+    return undefined;
+  return number(body.runId, 'runId', 0, Number.MAX_SAFE_INTEGER);
 }

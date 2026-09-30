@@ -26,6 +26,19 @@ O servidor expõe [createApp](server/src/app.ts), recebe um [MidiOutput](server/
 
 Também foram corrigidas falhas encontradas durante a implementação: Panic continua limpando notas se uma saída falhar; notas nativas e playback expiram sem heartbeat; desligar MIDI Thru libera sustain; alterar o tempo durante gravação cancela a tomada; notas muito curtas mantêm envelopes de áudio válidos.
 
+### Correções da revisão adversarial da PR #1
+
+Os seis casos foram reproduzidos em testes que falhavam antes das correções:
+
+| Falha | Correção e regressão |
+| --- | --- |
+| Update de uma execução anterior alterava a execução reiniciada | Update, Stop e heartbeat validam `runId`, além de sessão/revisão. HTTP rejeita IDs antigos ou ausentes; E2E retém um update em trânsito durante Stop/Play e verifica que a nova execução continua. Stop durante Start pendente usa o ID retornado por aquela requisição. |
+| Projeto válido com 2.048 notas recebia HTTP 413 | Parser HTTP aceita 1 MiB mais 4 KiB para o envelope. Teste envia projeto normalizado acima de 256 KiB em Start e Update, mantendo rejeição de corpos excessivos. |
+| Editar uma nota sob outra sustentada eliminava o novo ataque MIDI | O ataque encerra o proprietário anterior daquela nota/canal no loop. Relógio falso verifica Note Off/On com a nova velocity e que o desligamento antigo não corta a nova nota. |
+| Aba desatualizada apagava biblioteca/projeto atual no pagehide | Abas sem alterações não gravam; persistência compara o projeto-base e mescla operações de biblioteca sobre o conteúdo mais recente. Testes com duas abas verificam fechamento, conflito de edição, duplicação para preservar ambas as ideias e exclusão sem ressurreição. |
+| Slider de velocity não alterava melodias personalizadas | Controle desabilitado com explicação para notas editadas/gravadas; velocity individual e volume da trilha permanecem disponíveis. E2E verifica materialização e Undo. |
+| Fila de notas futuras consumia o limite de 128 vozes | Fontes são criadas em uma janela de 80 ms, com limite por intervalos simultâneos. E2E verifica 200 notas sequenciais sem ataques perdidos, limite simultâneo e cancelamento de ataques ainda na fila após Stop. |
+
 ## Funcionalidades entregues
 
 | Funcionalidade | Interface e módulo principal |
@@ -70,9 +83,9 @@ Dependências foram atualizadas junto com o lockfile, incluindo Vite e ferrament
 | `npm run format:check` | Passou. |
 | `npm run lint` | Passou. |
 | `npm run typecheck` | Passou nos três workspaces. |
-| `npm test` | 20 testes passaram. |
+| `npm test` | 23 testes passaram. |
 | `npm run build` | Cliente, servidor e pacote compartilhado compilados. |
-| `npm run test:e2e` | 16 testes passaram em Chromium. |
+| `npm run test:e2e` | 24 testes passaram em Chromium. |
 | Servidor de desenvolvimento | Piano e Chord Lab carregaram em Chromium, incluindo rota lazy; nenhum erro JavaScript. |
 | `npm audit` | Zero vulnerabilidades. |
 

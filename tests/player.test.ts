@@ -4,6 +4,38 @@ import { defaultProject, LoopScheduler, NoteRegistry, compileProject } from '@mi
 import { PlayerService } from '../server/src/application/player-service.js';
 import { FakeClock } from './clock.js';
 import { fakeMidi } from './midi-fixture.js';
+
+test('a live edit retriggers a sustained pitch and its previous release cannot cut the new note', () => {
+  const midi = fakeMidi(),
+    clock = new FakeClock(),
+    player = new PlayerService(midi, clock);
+  player.setMidiOutputEnabled(true);
+  const project = defaultProject();
+  project.bpm = 120;
+  project.chords = project.chords.slice(0, 3);
+  project.playback.chords = false;
+  project.playback.melody = project.melody.enabled = true;
+  project.melodyNotes = [
+    { id: 'held', note: 60, startBeat: 0, durationBeats: 4, velocity: 80, sourceChannel: 1 },
+    { id: 'next', note: 62, startBeat: 2, durationBeats: 3, velocity: 110, sourceChannel: 1 },
+  ];
+  player.start(project, 'tab', 0, 0);
+  clock.advance(500);
+  const edited = structuredClone(project);
+  edited.melodyNotes![1].note = 60;
+  player.update(edited, 'tab', 1, undefined, player.status().runId);
+  clock.advance(510);
+  assert.deepEqual(midi.events, [
+    [0x91, 60, 80],
+    [0x81, 60, 0],
+    [0x91, 60, 110],
+  ]);
+  clock.advance(1000);
+  assert.equal(midi.events.length, 3, 'the old release must not stop the retriggered note');
+  clock.advance(500);
+  assert.deepEqual(midi.events.at(-1), [0x81, 60, 0]);
+  player.panic();
+});
 test('one chord creates recurring occurrences and stop cancels the clock', () => {
   const clock = new FakeClock(),
     occurrences: number[] = [];
@@ -34,7 +66,7 @@ test('server stop cancels melody attacks and releases sounding notes', () => {
   project.melody.enabled = project.playback.melody = true;
   player.start(project, 'tab', 0, 0);
   clock.advance(50);
-  player.stop('tab');
+  player.stop('tab', player.status().runId);
   const count = midi.events.length;
   clock.advance(10000);
   assert.equal(midi.events.length, count);
@@ -77,8 +109,8 @@ test('ownership and revision reject stale updates without altering playback', ()
     project = defaultProject();
   player.start(project, 'a', 3, 0);
   assert.throws(() => player.start(project, 'b'));
-  assert.throws(() => player.stop('b'));
-  assert.throws(() => player.update(project, 'a', 2));
+  assert.throws(() => player.stop('b', player.status().runId));
+  assert.throws(() => player.update(project, 'a', 2, undefined, player.status().runId));
   assert.equal(player.status().revision, 3);
   assert.equal(player.status().owner, 'a');
   player.panic();
@@ -102,7 +134,7 @@ test('playback lease expires after a disconnected tab and heartbeat renews it', 
     player = new PlayerService(fakeMidi(), clock);
   player.start(defaultProject(), 'tab', 0, 0);
   clock.advance(9000);
-  player.heartbeat('tab');
+  player.heartbeat('tab', player.status().runId);
   clock.advance(9000);
   assert.equal(player.status().playing, true);
   clock.advance(1001);

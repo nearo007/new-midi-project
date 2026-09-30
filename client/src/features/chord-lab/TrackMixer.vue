@@ -19,6 +19,12 @@
           type="range"
           min="1"
           max="127"
+          :disabled="track.id === 'melody' && project.melodyNotes !== null"
+          :aria-describedby="
+            track.id === 'melody' && project.melodyNotes !== null
+              ? 'individual-velocities'
+              : undefined
+          "
           :value="
             track.id === 'harmony'
               ? project.playback.harmonyVelocity
@@ -26,6 +32,13 @@
           "
           @input="velocity(track.id, $event)"
       /></label>
+      <small
+        v-if="track.id === 'melody' && project.melodyNotes !== null"
+        id="individual-velocities"
+      >
+        Custom melody uses individual note velocities. Edit a note in the piano roll, or use track
+        volume to adjust the whole melody.
+      </small>
       <label
         >Volume {{ Math.round(project.tracks[track.id].volume * 100) }}%<input
           type="range"
@@ -115,6 +128,11 @@ label {
   flex-direction: row;
   color: var(--text);
   align-items: center;
+}
+small {
+  flex-basis: 100%;
+  color: var(--muted);
+  line-height: 1.5;
 }
 input {
   accent-color: var(--acid);

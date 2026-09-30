@@ -110,6 +110,11 @@ export class NoteRegistry {
     )
       this.sendOff(owner.note, owner.channel);
   }
+  releasePitch(note: number, channel: number, prefix: string): void {
+    for (const [id, owner] of [...this.owners])
+      if (id.startsWith(prefix) && owner.note === note && owner.channel === channel)
+        this.release(id);
+  }
   releaseAll(prefix = ''): void {
     let failure: unknown;
     for (const id of [...this.owners.keys()]) {

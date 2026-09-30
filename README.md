@@ -43,6 +43,8 @@ Select a local sound or MIDI output, edit the progression and press **Play selec
 
 **Generate** or changing generator restrictions replaces manual melody edits with a new generated variation. The UI marks custom notes, and Undo restores the previous idea. **Edit generated notes** materializes the current generator output for manual editing. Record captures one full progression, with optional count-in; changing the project identity, tempo, chord order or durations cancels the take and preserves the existing melody. Recording begins after the count-in.
 
+The melody velocity slider controls generated notes. Edited and recorded melodies retain their individual note velocities, so that slider is disabled with an explanation. Edit velocity in the piano roll or use track volume to scale the whole melody; playback, MIDI and WAV use those same values.
+
 ## MIDI and audio behavior
 
 The two MIDI output routes are alternatives:
@@ -58,9 +60,13 @@ Stop cancels the progression and queued attacks while letting the local effect t
 
 Navigation inside the app preserves playback. Hiding the browser tab stops it deliberately to avoid background timer throttling. Returning to the tab requires Play. Web Audio/Web MIDI are scheduled locally from a monotonic clock, without per-chord HTTP polling. Native playback uses the same compiled sequence and a future start time; native edits and local audio switch at a common future chord boundary. If an update response arrives too late, playback stops with a recovery message. Hardware latency and clock drift over long sessions still depend on the system and instrument.
 
+Native update, Stop and heartbeat commands from browser sessions carry the `runId` returned by Start. Commands for an earlier run receive a conflict and cannot change a restarted session. The original API without a session remains available under its isolated `legacy` owner. Local audio creates sources within an 80 ms scheduling window; future notes remain cancellable without consuming simultaneous polyphony.
+
 ## Projects and limits
 
 Current projects and the named library are stored in this browser under `midi-toolbox-projects-v1`; sound/theme/device preferences use `midi-toolbox-settings`. Previous chord tuples and preferences migrate on first use. Seed and generator version are retained. A bad import leaves the open project intact; storage failures appear in the UI, and JSON export remains available.
+
+Closing an unchanged tab does not rewrite its saved snapshot. Library saves and deletions merge with the latest stored library, and other tabs refresh their library lists. If another tab changed the autosaved project or the same library entry, a stale edit is kept open with a conflict message. Save a separate copy with **Duplicate** or export JSON to preserve it, then open the desired library project to resume autosaving.
 
 - 1–128 chords, each 0.25–16 beats; 20–240 BPM.
 - Up to 2,048 manual/recorded melody notes and 128 active local audio voices.

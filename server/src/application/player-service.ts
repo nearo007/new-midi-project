@@ -74,23 +74,34 @@ export class PlayerService {
     if (this.playing && this.owner !== owner)
       throw new ConflictError('Another tab owns native playback. Stop it there or use Panic.');
   }
+  private checkRun(owner: string, expectedRunId?: number): void {
+    this.checkOwner(owner);
+    if ((owner !== 'legacy' || expectedRunId !== undefined) && expectedRunId !== this.runId)
+      throw new ConflictError('This command belongs to a different playback run');
+  }
   start(project: Project, owner: string, revision = 0, delayMs = 100) {
     this.checkOwner(owner);
     const sequence = compileProject(project);
-    this.stop(owner);
+    this.stop();
     this.project = project;
     this.owner = owner;
     this.revision = revision;
     this.playing = true;
     this.error = null;
-    if (owner !== 'legacy') this.heartbeat(owner);
+    if (owner !== 'legacy') this.heartbeat(owner, this.runId);
     const startAt = Date.now() + delayMs;
     this.scheduler.start(sequence, this.clock.now() + delayMs);
     this.log('start');
     return { ...this.status(), startAt };
   }
-  update(project: Project, owner: string, revision: number, applyAt?: number): void {
-    this.checkOwner(owner);
+  update(
+    project: Project,
+    owner: string,
+    revision: number,
+    applyAt?: number,
+    expectedRunId?: number,
+  ): void {
+    this.checkRun(owner, expectedRunId);
     if (!this.playing) throw new ConflictError('No progression is currently playing');
     const sequence = compileProject(project);
     if (revision <= this.revision)
@@ -103,8 +114,8 @@ export class PlayerService {
     );
     this.log('update');
   }
-  stop(owner?: string): void {
-    if (owner) this.checkOwner(owner);
+  stop(owner?: string, expectedRunId?: number): void {
+    if (owner) this.checkRun(owner, expectedRunId);
     if (this.playing) this.log('stop');
     this.scheduler.stop();
     if (this.leaseTimer !== undefined) this.clock.clearTimer(this.leaseTimer);
@@ -118,8 +129,8 @@ export class PlayerService {
     this.timers.clear();
     this.notes.releaseAll('loop:');
   }
-  heartbeat(owner: string): void {
-    this.checkOwner(owner);
+  heartbeat(owner: string, expectedRunId?: number): void {
+    this.checkRun(owner, expectedRunId);
     if (!this.playing) throw new ConflictError('No active playback');
     if (this.leaseTimer !== undefined) this.clock.clearTimer(this.leaseTimer);
     this.leaseTimer = this.clock.setTimer(
@@ -219,7 +230,12 @@ export class PlayerService {
     step.events.forEach((event, i) => {
       const id = `loop:${this.runId}:${occurrence}:${i}`;
       const start = at + (event.startBeat * 60000) / bpm;
-      this.schedule(() => this.notes.press(id, event.note, event.velocity, event.channel), start);
+      this.schedule(() => {
+        // An edit can introduce an attack under a note sustained by an older revision.
+        // Retire that loop owner so its eventual note-off cannot cut the new attack.
+        this.notes.releasePitch(event.note, event.channel, 'loop:');
+        this.notes.press(id, event.note, event.velocity, event.channel);
+      }, start);
       this.schedule(() => this.notes.release(id), start + (event.durationBeats * 60000) / bpm);
     });
   }

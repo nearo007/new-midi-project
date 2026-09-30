@@ -13,6 +13,7 @@ import {
 } from '@midi-toolbox/core';
 import { readStoredSettings } from '../../infrastructure/persistence/settings';
 const STORAGE_KEY = 'midi-toolbox-projects-v1';
+let persistedCurrent: string | undefined;
 export const editorError = ref('');
 export const saveState = ref<'saved' | 'saving' | 'error'>('saved');
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
@@ -56,6 +57,7 @@ function restore(): { current: Project; library: Project[] } {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { current: migrate(), library: [] };
     const saved = JSON.parse(raw);
+    persistedCurrent = JSON.stringify(saved.current);
     const library: Project[] = [];
     if (Array.isArray(saved.library))
       for (const item of saved.library) {
@@ -80,6 +82,7 @@ function restore(): { current: Project; library: Project[] } {
 const initial = restore();
 export const project = shallowRef(initial.current);
 export const library = shallowRef(initial.library);
+const libraryBases = new Map(initial.library.map((item) => [item.id, item]));
 const past = shallowRef<Project[]>([]),
   future = shallowRef<Project[]>([]);
 export const canUndo = computed(() => past.value.length > 0),
@@ -88,26 +91,112 @@ export const totalBeats = computed(() =>
   project.value.chords.reduce((sum, c) => sum + c.durationBeats, 0),
 );
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+let dirty = persistedCurrent === undefined;
+const libraryChanges = new Map<
+  string,
+  { before: Project | undefined; after: Project | undefined }
+>();
 let previousGroup = '',
   previousEdit = 0;
+function readLatest() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  const saved = raw ? JSON.parse(raw) : {};
+  const latestLibrary: Project[] = [];
+  if (Array.isArray(saved.library))
+    for (const item of saved.library) {
+      try {
+        latestLibrary.push(parseProject(item));
+      } catch {
+        // Match restore(): retain valid entries even if another one is corrupt.
+      }
+    }
+  return { current: saved.current as unknown, library: latestLibrary };
+}
+const conflictMessage =
+  'Another tab changed the saved project. Save your edits to the library, duplicate the project, or export JSON before closing this tab.';
 export function flushProject(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = undefined;
+  // A pagehide from an untouched tab must never write its old snapshot.
+  if (!dirty && libraryChanges.size === 0) return;
   try {
+    const latest = readLatest();
+    const currentChanged = JSON.stringify(latest.current) !== persistedCurrent;
+    if (dirty && currentChanged && libraryChanges.size === 0) {
+      saveState.value = 'error';
+      editorError.value = conflictMessage;
+      return;
+    }
+    for (const [id, change] of libraryChanges) {
+      const saved = latest.library.find((entry) => entry.id === id);
+      if (JSON.stringify(saved) !== JSON.stringify(change.before)) {
+        libraryChanges.clear();
+        library.value = readLatest().library;
+        saveState.value = 'error';
+        editorError.value =
+          'Another tab changed this library entry. Duplicate the project or export JSON to preserve your edits.';
+        return;
+      }
+      latest.library = latest.library.filter((entry) => entry.id !== id);
+      if (change.after) latest.library.push(change.after);
+    }
+    const current = dirty && !currentChanged ? project.value : latest.current;
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ current: project.value, library: library.value }),
+      JSON.stringify({ current: current ?? project.value, library: latest.library }),
     );
-    saveState.value = 'saved';
+    library.value = latest.library;
+    for (const [id, change] of libraryChanges) {
+      if (change.after) libraryBases.set(id, change.after);
+      else libraryBases.delete(id);
+    }
+    libraryChanges.clear();
+    if (!currentChanged) {
+      persistedCurrent = JSON.stringify(current ?? project.value);
+      dirty = false;
+    }
+    saveState.value = dirty ? 'error' : 'saved';
+    editorError.value = dirty
+      ? 'Your edits were saved to the library. Another tab owns the latest autosave; open a library project to continue autosaving here.'
+      : '';
   } catch {
     saveState.value = 'error';
     editorError.value = 'Storage is full or unavailable. Export your project to keep a copy.';
   }
 }
 function saveSoon(): void {
+  dirty = true;
   saveState.value = 'saving';
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(flushProject, 250);
+}
+export function initializeProjectPersistence(): () => void {
+  if (dirty) saveSoon();
+  const refresh = (event: StorageEvent) => {
+    if (event.key !== STORAGE_KEY || event.storageArea !== localStorage) return;
+    try {
+      const latest = readLatest();
+      library.value = [
+        ...latest.library.filter((entry) => !libraryChanges.has(entry.id)),
+        ...[...libraryChanges.values()].flatMap((change) => (change.after ? [change.after] : [])),
+      ];
+      if (dirty && JSON.stringify(latest.current) !== persistedCurrent) {
+        saveState.value = 'error';
+        editorError.value = conflictMessage;
+      }
+    } catch {
+      // The next save reports unreadable storage without discarding this tab's edits.
+    }
+  };
+  window.addEventListener('storage', refresh);
+  return () => window.removeEventListener('storage', refresh);
+}
+function acceptCurrentSelection(): void {
+  try {
+    persistedCurrent = JSON.stringify(readLatest().current);
+  } catch {
+    // flushProject retains the draft and exposes storage errors.
+  }
 }
 export function editProject(change: (draft: Project) => void, group = ''): boolean {
   try {
@@ -206,7 +295,9 @@ export function changeMelody(change: (draft: Project['melody']) => void): void {
   }, 'melody');
 }
 export function createProject(): void {
-  editProject((p) => Object.assign(p, fresh()));
+  if (editProject((p) => Object.assign(p, fresh()))) {
+    acceptCurrentSelection();
+  }
 }
 export function duplicateProject(): void {
   editProject((p) => {
@@ -216,6 +307,11 @@ export function duplicateProject(): void {
   saveNamedProject();
 }
 export function saveNamedProject(): void {
+  const pending = libraryChanges.get(project.value.id);
+  libraryChanges.set(project.value.id, {
+    before: pending ? pending.before : libraryBases.get(project.value.id),
+    after: clone(project.value),
+  });
   library.value = [
     ...library.value.filter((item) => item.id !== project.value.id),
     clone(project.value),
@@ -224,16 +320,25 @@ export function saveNamedProject(): void {
 }
 export function loadProject(id: string): void {
   const saved = library.value.find((p) => p.id === id);
-  if (saved) editProject((p) => Object.assign(p, clone(saved)));
+  if (saved) {
+    libraryBases.set(id, saved);
+    acceptCurrentSelection();
+    if (!editProject((p) => Object.assign(p, clone(saved)))) saveSoon();
+  }
 }
 export function deleteSavedProject(id: string): void {
+  const pending = libraryChanges.get(id);
+  libraryChanges.set(id, {
+    before: pending ? pending.before : library.value.find((item) => item.id === id),
+    after: undefined,
+  });
   library.value = library.value.filter((p) => p.id !== id);
   flushProject();
 }
 export function importProject(text: string): void {
   if (text.length > 1024 * 1024) throw new Error('Project files must be smaller than 1 MB');
   const parsed = parseProject(JSON.parse(text));
-  editProject((p) => Object.assign(p, parsed));
+  if (editProject((p) => Object.assign(p, parsed))) acceptCurrentSelection();
 }
 export const PRESETS = [
   { id: 'minor', name: 'Minor journey' },

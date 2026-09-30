@@ -210,8 +210,9 @@ export interface ToneHandle {
   release(): void;
   stop(): void;
 }
-type Voice = { handle: ToneHandle; group: string };
+type Voice = { handle: ToneHandle; group: string; start: number; end: number };
 const voices = new Set<Voice>();
+const queuedTones = new Set<{ handle: ToneHandle; group: string }>();
 const silentHandle: ToneHandle = { release() {}, stop() {} };
 
 /** at is a performance.now() timestamp; pending samples cannot resurrect a cancelled voice. */
@@ -225,7 +226,6 @@ function voice(
   const mode = soundMode.value;
   if (mode === 'none') return silentHandle;
   if (!Number.isInteger(note) || note < 0 || note > 127) throw new Error('Invalid MIDI note');
-  while (voices.size >= 128) voices.values().next().value?.handle.stop();
   let state: 'pending' | 'active' | 'released' | 'stopped' = 'pending';
   let source: AudioScheduledSourceNode | null = null;
   let gain: GainNode | null = null;
@@ -254,13 +254,14 @@ function voice(
       return;
     }
     const release = immediate ? 0.025 : mode === 'piano' ? 0.35 : 0.12;
+    entry.end = now + release;
     holdGainAt(gain, now);
     gain.gain.linearRampToValueAtTime(0, now + release);
     source.stop(now + release + 0.01);
     if (immediate) voices.delete(entry);
   };
   const handle: ToneHandle = { release: () => finish(false), stop: () => finish(true) };
-  const entry: Voice = { handle, group };
+  const entry: Voice = { handle, group, start: Infinity, end: Infinity };
   voices.add(entry);
   void (async () => {
     if (ctx.state !== 'running') await ctx.resume();
@@ -294,6 +295,22 @@ function voice(
       source = osc;
     }
     const end = Math.min(naturalEnd, duration === undefined ? Infinity : start + duration);
+    // The limit is simultaneous sound, not the number of queued or releasing sources.
+    // Check all attack boundaries covered by this interval, including future attacks.
+    const boundaries = new Set([
+      start,
+      ...[...voices]
+        .filter((v) => v !== entry && v.start > start && v.start < end)
+        .map((v) => v.start),
+    ]);
+    for (const boundary of boundaries) {
+      const overlapping = [...voices].filter(
+        (v) => v !== entry && v.start <= boundary && v.end > boundary,
+      );
+      while (overlapping.length >= 128) overlapping.shift()!.handle.stop();
+    }
+    entry.start = start;
+    entry.end = end;
     const attack = Math.min(0.008, (end - start) / 3);
     gain.gain.setValueAtTime(0, start);
     gain.gain.linearRampToValueAtTime(buffer ? volume * 0.75 : volume, start + attack);
@@ -327,12 +344,36 @@ export function scheduleTone(
   at: number,
   group = 'transport',
 ): ToneHandle {
-  return voice(note, velocity, group, at, duration);
+  const delay = at - performance.now() - 80;
+  if (delay <= 0) return voice(note, velocity, group, at, duration);
+  let tone: ToneHandle | undefined;
+  const cancel = () => {
+    clearTimeout(timer);
+    queuedTones.delete(entry);
+  };
+  const handle: ToneHandle = {
+    release() {
+      cancel();
+      tone?.release();
+    },
+    stop() {
+      cancel();
+      tone?.stop();
+    },
+  };
+  const entry = { handle, group };
+  const timer = setTimeout(() => {
+    queuedTones.delete(entry);
+    tone = voice(note, velocity, group, at, duration);
+  }, delay);
+  queuedTones.add(entry);
+  return handle;
 }
 export function playTone(note: number, duration = 0.3, velocity = 100): void {
   scheduleTone(note, duration, velocity, performance.now(), 'preview');
 }
 export function stopAudio(group?: string): void {
+  for (const tone of [...queuedTones]) if (!group || tone.group === group) tone.handle.stop();
   for (const voice of [...voices]) if (!group || voice.group === group) voice.handle.stop();
   if (!group && audioOutput) {
     // Discard the effect graph too so Panic cannot leave a reverb tail audible.

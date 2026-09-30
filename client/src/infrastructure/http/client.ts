@@ -38,12 +38,18 @@ export const startProgression = (project: Project, revision: number, delayMs: nu
     revision,
     delayMs,
   });
-export const updateProgression = (project: Project, revision: number, applyAt: number) =>
+export const updateProgression = (
+  project: Project,
+  revision: number,
+  applyAt: number,
+  runId: number,
+) =>
   fetchJSON('/chord-lab/progression', {
     method: 'PUT',
-    body: JSON.stringify({ project, session: sessionId, revision, applyAt }),
+    body: JSON.stringify({ project, session: sessionId, revision, applyAt, runId }),
   });
-export const stopProgression = () => post('/chord-lab/stop-progression', { session: sessionId });
+export const stopProgression = (runId: number) =>
+  post('/chord-lab/stop-progression', { session: sessionId, runId });
 export const getProgressionStatus = () => fetchJSON<PlaybackStatus>('/chord-lab/status');
 export const panicServer = () => post('/panic');
 export const noteOn = (id: string, note: number, velocity: number, channel: number) =>
@@ -53,5 +59,5 @@ export const heartbeatNotes = (ids: string[]) =>
   post('/note-heartbeat', { session: sessionId, ids });
 export const releaseSession = () => post('/release-session', { session: sessionId });
 
-export const heartbeatPlayback = () =>
-  post<PlaybackStatus>('/chord-lab/heartbeat', { session: sessionId });
+export const heartbeatPlayback = (runId: number) =>
+  post<PlaybackStatus>('/chord-lab/heartbeat', { session: sessionId, runId });

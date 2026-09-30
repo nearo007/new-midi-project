@@ -73,6 +73,165 @@ async function setup(page: Page, project: Project = defaultProject('test', 123),
 }
 const countVoices = (page: Page) => page.evaluate(() => (window as any).__audit.voices.length);
 
+test("closing an untouched stale tab preserves another tab's project and library", async ({
+  page,
+  context,
+}) => {
+  await setup(page);
+  await page.goto('/chord-lab');
+  const stale = await context.newPage();
+  await stale.goto('/chord-lab');
+  await stale.getByRole('button', { name: 'Save to library', exact: true }).waitFor();
+  await page.getByLabel('Project name', { exact: true }).fill('Keep this composition');
+  await page.getByLabel('Project name', { exact: true }).press('Tab');
+  await page.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await stale.goto('about:blank');
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('midi-toolbox-projects-v1')!),
+  );
+  expect(saved.current.name).toBe('Keep this composition');
+  expect(saved.library.map((p: Project) => p.name)).toEqual(['Keep this composition']);
+});
+
+test('conflicting tab edits stay available and duplication preserves both library entries', async ({
+  page,
+  context,
+}) => {
+  await setup(page);
+  await page.goto('/chord-lab');
+  const stale = await context.newPage();
+  await stale.goto('/chord-lab');
+  await stale.getByRole('button', { name: 'Save to library', exact: true }).waitFor();
+  await page.getByLabel('Project name', { exact: true }).fill('First idea');
+  await page.getByLabel('Project name', { exact: true }).press('Tab');
+  await page.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await stale.getByRole('button', { name: 'Add chord', exact: true }).click();
+  await expect(stale.getByRole('alert').filter({ hasText: 'Another tab changed' })).toBeVisible();
+  await expect(stale.getByRole('article')).toHaveCount(5);
+  await stale.getByRole('button', { name: 'Save to library', exact: true }).click();
+  await expect(
+    stale.getByRole('alert').filter({ hasText: 'Another tab changed this library entry' }),
+  ).toBeVisible();
+  await stale.getByRole('button', { name: 'Duplicate', exact: true }).click();
+  const saved = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('midi-toolbox-projects-v1')!),
+  );
+  expect(saved.current.name).toBe('First idea');
+  expect(saved.library.map((p: Project) => p.chords.length).sort()).toEqual([4, 5]);
+  expect(new Set(saved.library.map((p: Project) => p.id)).size).toBe(2);
+  await stale.goto('about:blank');
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem('midi-toolbox-projects-v1')!).library.length,
+    ),
+  ).toBe(2);
+});
+
+test('autosave from another tab cannot resurrect a deleted library entry', async ({
+  page,
+  context,
+}) => {
+  await setup(page);
+  await page.goto('/chord-lab');
+  await page.getByRole('button', { name: 'Save to library', exact: true }).click();
+  const second = await context.newPage();
+  await second.goto('/chord-lab');
+  await second.getByRole('button', { name: 'Save to library', exact: true }).waitFor();
+  await page.getByLabel('Library', { exact: false }).selectOption('test');
+  await page.getByRole('button', { name: 'Delete saved copy', exact: true }).click();
+  await second.getByRole('button', { name: 'Add chord', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => JSON.parse(localStorage.getItem('midi-toolbox-projects-v1')!).current.chords.length,
+      ),
+    )
+    .toBe(5);
+  expect(
+    await page.evaluate(
+      () => JSON.parse(localStorage.getItem('midi-toolbox-projects-v1')!).library,
+    ),
+  ).toEqual([]);
+});
+
+test('custom melody explains individual velocity and retains track volume control', async ({
+  page,
+}) => {
+  await setup(page);
+  await page.goto('/chord-lab');
+  const mixer = page.getByRole('region', { name: 'Track mixer' });
+  const melodyVelocity = mixer.getByRole('slider').nth(2);
+  await expect(melodyVelocity).toBeEnabled();
+  await page.getByRole('button', { name: 'Edit generated notes', exact: true }).click();
+  await expect(melodyVelocity).toBeDisabled();
+  await expect(mixer.getByText(/individual note velocities/i)).toBeVisible();
+  await expect(mixer.getByRole('slider').nth(3)).toBeEnabled();
+  await page.getByRole('button', { name: 'Undo', exact: true }).click();
+  await expect(melodyVelocity).toBeEnabled();
+});
+
+test('dense sequential melody retains every attack without exceeding simultaneous polyphony', async ({
+  page,
+}) => {
+  const project = defaultProject();
+  project.bpm = 240;
+  project.chords = project.chords.slice(0, 1);
+  project.chords[0].durationBeats = 16;
+  project.playback.chords = false;
+  project.playback.melody = project.melody.enabled = true;
+  project.melodyNotes = Array.from({ length: 200 }, (_, i) => ({
+    id: `note-${i}`,
+    note: 60,
+    startBeat: i * 0.075,
+    durationBeats: 0.04,
+    velocity: 100,
+    sourceChannel: 1,
+  }));
+  await setup(page, project);
+  await page.goto('/chord-lab');
+  await page.getByRole('button', { name: 'Play selected', exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const { ctx, voices } = (window as any).__audit;
+        return voices.filter((v: any) => v.start <= ctx.currentTime && v.stop > v.start).length;
+      }),
+    )
+    .toBeGreaterThanOrEqual(200);
+  const dropped = await page.evaluate(
+    () => (window as any).__audit.voices.slice(0, 200).filter((v: any) => v.stop <= v.start).length,
+  );
+  expect(dropped).toBe(0);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  const count = await countVoices(page);
+  await page.waitForTimeout(200);
+  expect(await countVoices(page)).toBe(count);
+});
+
+test('local audio still caps a simultaneous chord at 128 voices', async ({ page }) => {
+  const project = defaultProject();
+  project.chords = project.chords.slice(0, 1);
+  project.chords[0].durationBeats = 8;
+  project.playback.melody = project.melody.enabled = true;
+  project.melodyNotes = Array.from({ length: 128 }, (_, note) => ({
+    id: `note-${note}`,
+    note,
+    startBeat: 0,
+    durationBeats: 8,
+    velocity: 80,
+    sourceChannel: 1,
+  }));
+  await setup(page, project);
+  await page.goto('/chord-lab');
+  await page.getByRole('button', { name: 'Play selected', exact: true }).click();
+  await expect.poll(() => countVoices(page)).toBe(131);
+  const sounding = await page.evaluate(
+    () => (window as any).__audit.voices.filter((v: any) => v.stop > v.start).length,
+  );
+  expect(sounding).toBe(128);
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+});
+
 test('one-chord loop repeats without HTTP polling and survives view navigation', async ({
   page,
 }) => {
@@ -104,7 +263,7 @@ test('Stop cancels voices whose start time is still in the future', async ({ pag
   await setup(page, project);
   await page.goto('/chord-lab');
   await page.getByRole('button', { name: 'Play selected' }).click();
-  await expect.poll(() => countVoices(page)).toBeGreaterThanOrEqual(7);
+  await expect.poll(() => countVoices(page)).toBeGreaterThanOrEqual(4);
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
   const state = await page.evaluate(() => {
     const a = (window as any).__audit;
@@ -116,6 +275,106 @@ test('Stop cancels voices whose start time is still in the future', async ({ pag
       .filter((voice: any) => voice.start > state.now)
       .every((voice: any) => voice.stop < voice.start),
   ).toBeTruthy();
+  const stopped = await countVoices(page);
+  await page.waitForTimeout(1700); // The next deferred melody attack would be at 1.5s.
+  expect(await countVoices(page)).toBe(stopped);
+});
+
+test('native restart rejects an old in-flight edit while the new run keeps playing', async ({
+  page,
+  request,
+}) => {
+  await setup(page);
+  await page.route('**/api/ports', (route) =>
+    route.fulfill({ json: { ports: ['Test'], current: 'Test' } }),
+  );
+  await page.route('**/api/set-port', (route) =>
+    route.fulfill({ json: { ok: true, current: 'Test' } }),
+  );
+  await page.goto('/chord-lab');
+  await page.getByLabel('MIDI OUT', { exact: true }).selectOption('server:Test');
+  await page.getByRole('button', { name: 'Play selected', exact: true }).click();
+  await expect(page.locator('.transport-status')).toContainText('playing');
+  const first = await (await request.get('/api/chord-lab/status')).json();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let captured!: () => void;
+  const received = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  let oldRunId: number | undefined;
+  await page.route('**/api/chord-lab/progression', async (route) => {
+    oldRunId = route.request().postDataJSON().runId;
+    captured();
+    await gate;
+    await route.continue();
+  });
+  await page.getByLabel('Tempo', { exact: false }).fill('100');
+  await page.getByLabel('Tempo', { exact: false }).press('Tab');
+  await received;
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play selected', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Play selected', exact: true }).click();
+  await expect(page.locator('.transport-status')).toContainText('playing');
+  const second = await (await request.get('/api/chord-lab/status')).json();
+  expect(oldRunId).toBe(first.runId);
+  expect(second.runId).not.toBe(first.runId);
+  const rejected = page.waitForResponse((response) =>
+    response.url().endsWith('/api/chord-lab/progression'),
+  );
+  release();
+  expect((await rejected).status()).toBe(409);
+  const heartbeat = await page.waitForResponse((response) =>
+    response.url().endsWith('/api/chord-lab/heartbeat'),
+  );
+  expect(heartbeat.status()).toBe(200);
+  expect(heartbeat.request().postDataJSON().runId).toBe(second.runId);
+  const status = await (await request.get('/api/chord-lab/status')).json();
+  expect(status.playing).toBe(true);
+  expect(status.runId).toBe(second.runId);
+  expect(status.revision).toBe(0);
+  await expect(page.locator('.transport-status')).toContainText('playing');
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+});
+
+test('Stop during a pending native start releases only that returned run', async ({
+  page,
+  request,
+}) => {
+  await setup(page);
+  await page.route('**/api/ports', (route) =>
+    route.fulfill({ json: { ports: ['Test'], current: 'Test' } }),
+  );
+  await page.route('**/api/set-port', (route) =>
+    route.fulfill({ json: { ok: true, current: 'Test' } }),
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let captured!: () => void;
+  const received = new Promise<void>((resolve) => {
+    captured = resolve;
+  });
+  await page.route('**/api/chord-lab/start-progression', async (route) => {
+    const response = await route.fetch();
+    captured();
+    await gate;
+    await route.fulfill({ response });
+  });
+  await page.goto('/chord-lab');
+  await page.getByLabel('MIDI OUT', { exact: true }).selectOption('server:Test');
+  await page.getByRole('button', { name: 'Play selected', exact: true }).click();
+  await received;
+  const started = await (await request.get('/api/chord-lab/status')).json();
+  await page.getByRole('button', { name: 'Stop', exact: true }).click();
+  const stop = page.waitForRequest('**/api/chord-lab/stop-progression');
+  release();
+  expect((await stop).postDataJSON().runId).toBe(started.runId);
+  await expect(page.getByRole('button', { name: 'Play selected', exact: true })).toBeEnabled();
+  expect((await (await request.get('/api/chord-lab/status')).json()).playing).toBe(false);
 });
 
 test('piano supports keyboard, pointer cancellation and MIDI cleanup on navigation', async ({

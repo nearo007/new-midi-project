@@ -48,7 +48,8 @@ export const playUnavailable = computed(() => {
 let run = 0,
   revision = 0,
   nativeRun = false;
-let nativeStart: Promise<unknown> | null = null;
+let nativeStart: ReturnType<typeof startProgression> | null = null;
+let nativeRunId: number | null = null;
 let startTime = 0;
 let nativeClockOffset = 0,
   updateLead = 500;
@@ -123,10 +124,12 @@ function cancelLocal(): void {
   currentStep.value = -1;
 }
 async function monitor(token: number): Promise<void> {
+  const runId = nativeRunId;
+  if (runId === null || token !== run) return;
   try {
-    const status = await heartbeatPlayback();
+    const status = await heartbeatPlayback(runId);
     if (token !== run || !nativeRun) return;
-    if (!status.playing || status.owner !== sessionId)
+    if (!status.playing || status.owner !== sessionId || status.runId !== runId)
       throw new Error(status.error || 'Native playback stopped or changed ownership.');
   } catch (error) {
     if (token === run) {
@@ -150,6 +153,7 @@ export async function startTransport(allowSilent = false): Promise<void> {
   activeProject = project.value;
   const snapshot = activeProject;
   nativeRun = hasSelectedNativeMidiOutput();
+  nativeRunId = null;
   try {
     await resumeAudio();
     if (token !== run) return;
@@ -160,11 +164,10 @@ export async function startTransport(allowSilent = false): Promise<void> {
       const request = startProgression(snapshot, revision, 300 + countIn);
       nativeStart = request;
       const response = await request;
-      nativeStart = null;
-      if (token !== run) {
-        await stopProgression();
-        return;
-      }
+      if (nativeStart === request) nativeStart = null;
+      // Stop/Panic/pagehide owns cancellation, including a start still in flight.
+      if (token !== run) return;
+      nativeRunId = response.runId;
       const offset = response.serverTime - (sent + Date.now()) / 2;
       nativeClockOffset = offset;
       updateLead = Math.max(500, (Date.now() - sent) * 3);
@@ -189,6 +192,8 @@ export async function startTransport(allowSilent = false): Promise<void> {
     if (token === run) {
       cancelLocal();
       nativeRun = false;
+      nativeRunId = null;
+      nativeStart = null;
       transportState.value = 'error';
       transportError.value = error instanceof Error ? error.message : String(error);
     }
@@ -196,14 +201,18 @@ export async function startTransport(allowSilent = false): Promise<void> {
 }
 export async function stopTransport(failed = false): Promise<void> {
   const wasNative = nativeRun,
+    pendingStart = nativeStart,
+    previousRunId = nativeRunId,
     token = ++run;
   cancelLocal();
   nativeRun = false;
+  nativeRunId = null;
   transportState.value = wasNative ? 'stopping' : failed ? 'error' : 'idle';
   if (wasNative) {
     try {
-      await nativeStart?.catch(() => {});
-      await stopProgression();
+      const started = await pendingStart?.catch(() => null);
+      const runId = previousRunId ?? started?.runId;
+      if (runId !== undefined && runId !== null) await stopProgression(runId);
       if (token === run) transportState.value = failed ? 'error' : 'idle';
     } catch (error) {
       if (token === run) {
@@ -217,6 +226,7 @@ export async function panic(): Promise<void> {
   const token = ++run;
   cancelLocal();
   nativeRun = false;
+  nativeRunId = null;
   panicPerformance();
   transportState.value = 'stopping';
   try {
@@ -235,17 +245,25 @@ export async function panic(): Promise<void> {
 }
 function queueUpdate(): void {
   if (!isRunning.value) return;
+  if (nativeRun && nativeRunId === null) return;
   if (updateTimer) clearTimeout(updateTimer);
   const token = run;
   updateTimer = setTimeout(async () => {
     updateTimer = undefined;
     if (token !== run) return;
     const next = project.value,
+      runId = nativeRunId,
       nextRevision = ++revision;
     try {
       const applyAfter = nativeRun ? performance.now() + updateLead : -Infinity;
       if (nativeRun) {
-        await updateProgression(next, nextRevision, Date.now() + nativeClockOffset + updateLead);
+        if (runId === null) return;
+        await updateProgression(
+          next,
+          nextRevision,
+          Date.now() + nativeClockOffset + updateLead,
+          runId,
+        );
         if (token === run && performance.now() >= applyAfter - 80)
           throw new Error(
             'The server responded too late to synchronize this edit. Press Play to restart.',
@@ -275,14 +293,18 @@ export function initializeTransport(): () => void {
     cancelLocal();
     transportState.value = 'idle';
     if (nativeRun) {
-      void fetch('/api/chord-lab/stop-progression', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ session: sessionId }),
-        keepalive: true,
-      }).catch(() => {});
+      const stop = (runId: number) =>
+        fetch('/api/chord-lab/stop-progression', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session: sessionId, runId }),
+          keepalive: true,
+        }).catch(() => {});
+      if (nativeRunId !== null) void stop(nativeRunId);
+      else if (nativeStart) void nativeStart.then((status) => stop(status.runId)).catch(() => {});
     }
     nativeRun = false;
+    nativeRunId = null;
   };
   const visibility = () => {
     if (document.hidden && isRunning.value) {
