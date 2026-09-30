@@ -22,6 +22,13 @@
         <span class="panel-hint">Click, hold, and play.</span>
       </div>
       <PianoKeyboard />
+      <p class="played-notes">
+        {{
+          playedNotes.length
+            ? playedNotes.join(' · ')
+            : 'Focus a key and hold Enter or Space, or play your MIDI input.'
+        }}
+      </p>
       <div class="panel-footer">
         <span>LOW <b>A0</b></span>
         <span>HIGH <b>C8</b></span>
@@ -31,7 +38,14 @@
 </template>
 
 <script setup lang="ts">
-import PianoKeyboard from '../components/PianoKeyboard.vue';
+import PianoKeyboard from '../features/piano/PianoKeyboard.vue';
+import { computed } from 'vue';
+import { noteName } from '@midi-toolbox/core';
+import { heldNotes } from '../features/piano/performance';
+import { inputNotes } from '../midi/devices';
+const playedNotes = computed(() =>
+  [...new Set([...heldNotes, ...inputNotes])].sort((a, b) => a - b).map(noteName),
+);
 </script>
 
 <style scoped>
@@ -40,6 +54,12 @@ import PianoKeyboard from '../components/PianoKeyboard.vue';
   flex-direction: column;
   gap: clamp(2rem, 5vw, 4.5rem);
   width: 100%;
+}
+.played-notes {
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 
 .page-heading {

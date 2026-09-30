@@ -1,6 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
-import PianoView from '../views/PianoView.vue';
-import ChordLabView from '../views/ChordLabView.vue';
+const PianoView = () => import('../views/PianoView.vue');
+const ChordLabView = () => import('../views/ChordLabView.vue');
 
 const router = createRouter({
   history: createWebHistory(),

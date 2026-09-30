@@ -1,211 +1,260 @@
-import type { MidiOutput } from '../infrastructure/midi/midi-output.js';
-import type { Config } from '../infrastructure/config.js';
-import { calcInterval, calcNoteDuration, calcSilenceDuration } from '../core/timing.js';
+import {
+  compileProject,
+  LoopScheduler,
+  NoteRegistry,
+  systemClock,
+  type Clock,
+  type Project,
+  type SequenceStep,
+} from '@midi-toolbox/core';
+import type { MidiOutput } from '../ports/midi-output.js';
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+export class ConflictError extends Error {
+  readonly status = 409;
+  readonly code = 'PLAYBACK_CONFLICT';
 }
-
-export interface SequenceEntry {
-  notes: number[];
-  muted: boolean;
-  velocity?: number;
-  melodyNotes?: number[];
-  melodyVelocity?: number;
+export interface PlaybackLog {
+  event: 'start' | 'update' | 'stop' | 'error';
+  runId: number;
+  revision: number;
+  device: string;
+  error?: string;
 }
-
 export class PlayerService {
-  private midi: MidiOutput;
-  private config: Config;
+  private scheduler: LoopScheduler;
+  private notes: NoteRegistry;
+  private timers = new Set<unknown>();
+  private leaseTimer: unknown;
+  private liveTimers = new Map<string, unknown>();
+  private usedChannels = new Set<number>();
+  private owner: string | null = null;
+  private runId = 0;
+  private revision = 0;
+  private currentChordId: string | null = null;
+  private stepId = -1;
   private playing = false;
-  private loopTimeout: ReturnType<typeof setTimeout> | null = null;
-  private _currentChordIndex = -1;
-  private activeLoopSequence: SequenceEntry[] | null = null;
-  private loopRunId = 0;
-  private nextNoteToken = 1;
-  private activeNoteTokens = new Map<number, number>();
-  private midiOutputEnabled = false;
-
-  constructor(midi: MidiOutput, config: Config) {
-    this.midi = midi;
-    this.config = config;
+  private enabled = false;
+  private error: string | null = null;
+  private project: Project | null = null;
+  constructor(
+    private midi: MidiOutput,
+    private clock: Clock = systemClock,
+    private onEvent: (event: PlaybackLog) => void = () => {},
+  ) {
+    this.notes = new NoteRegistry(
+      (note, velocity, channel) => {
+        if (this.enabled) {
+          this.usedChannels.add(channel);
+          this.midi.sendNoteOn(note, velocity, channel);
+        }
+      },
+      (note, channel) => this.midi.sendNoteOff(note, channel),
+    );
+    this.scheduler = new LoopScheduler(
+      clock,
+      (step, at, bpm, occurrence) => this.playStep(step, at, bpm, occurrence),
+      (error) => this.fail(error),
+    );
   }
-
-  setBpm(bpm: number): void {
-    this.config.bpm = bpm;
+  status() {
+    return {
+      playing: this.playing,
+      currentChord:
+        this.project?.chords.findIndex((chord) => chord.id === this.currentChordId) ?? -1,
+      currentChordId: this.currentChordId,
+      stepId: this.stepId,
+      runId: this.runId,
+      revision: this.revision,
+      owner: this.owner,
+      error: this.error,
+      serverTime: Date.now(),
+    };
   }
-
-  setLoopBpm(bpm: number): void {
-    this.config.loopBpm = bpm;
+  checkOwner(owner: string): void {
+    if (this.playing && this.owner !== owner)
+      throw new ConflictError('Another tab owns native playback. Stop it there or use Panic.');
   }
-
-  setStaccato(value: number): void {
-    this.config.staccato = value;
+  private checkRun(owner: string, expectedRunId?: number): void {
+    this.checkOwner(owner);
+    if ((owner !== 'legacy' || expectedRunId !== undefined) && expectedRunId !== this.runId)
+      throw new ConflictError('This command belongs to a different playback run');
   }
-
-  isPlaying(): boolean {
-    return this.playing;
-  }
-
-  get currentChordIndex(): number {
-    return this._currentChordIndex;
-  }
-
-  setMidiOutputEnabled(enabled: boolean): void {
-    if (this.midiOutputEnabled === enabled) return;
-    if (!enabled) this.releaseAllNotes();
-    this.midiOutputEnabled = enabled;
-  }
-
-  isMidiOutputEnabled(): boolean {
-    return this.midiOutputEnabled;
-  }
-
-  private noteOn(note: number, velocity = 100): number {
-    if (!this.midiOutputEnabled) return 0;
-    const token = this.nextNoteToken++;
-    this.activeNoteTokens.set(token, note);
-    this.midi.sendNoteOn(note, velocity);
-    return token;
-  }
-
-  private noteOff(token: number): void {
-    if (!token) return;
-    const note = this.activeNoteTokens.get(token);
-    if (note === undefined) return;
-    this.activeNoteTokens.delete(token);
-    if (this.midiOutputEnabled) this.midi.sendNoteOff(note);
-  }
-
-  private releaseTokens(tokens: number[]): void {
-    for (const token of tokens) this.noteOff(token);
-  }
-
-  private releaseAllNotes(): void {
-    const tokens = [...this.activeNoteTokens.keys()];
-    this.releaseTokens(tokens);
-  }
-
-  private async waitUntil(deadline: number, runId: number): Promise<void> {
-    while (this.playing && runId === this.loopRunId) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return;
-      await sleep(Math.min(remaining, 10));
-    }
-  }
-
-  private async playLoopEntry(
-    entry: SequenceEntry,
-    noteDuration: number,
-    runId: number,
-    windowStart: number,
-  ): Promise<void> {
-    const chordTokens: number[] = [];
-    const melodyTokens: number[] = [];
-    const melodyNotes = entry.melodyNotes ?? [];
-
-    if (!entry.muted) {
-      for (const note of entry.notes) chordTokens.push(this.noteOn(note, entry.velocity ?? 100));
-    }
-
-    if (melodyNotes.length > 0) {
-      // Divide the chord's active window into melodic slots. A small rest at
-      // the end of each slot keeps the line distinct from a sustained chord.
-      const slotDuration = noteDuration / melodyNotes.length;
-      const melodyDuration = slotDuration * 0.72;
-
-      for (const [index, note] of melodyNotes.entries()) {
-        if (!this.playing || runId !== this.loopRunId) break;
-        const token = this.noteOn(note, entry.melodyVelocity ?? 88);
-        melodyTokens.push(token);
-        await this.waitUntil(windowStart + (index * slotDuration + melodyDuration) * 1000, runId);
-        this.noteOff(token);
-        await this.waitUntil(windowStart + ((index + 1) * slotDuration) * 1000, runId);
-      }
-
-      // If a loop was stopped during the final rest, there is no extra wait
-      // needed here: all melody tokens have already been released.
-    } else {
-      await this.waitUntil(windowStart + noteDuration * 1000, runId);
-    }
-
-    this.releaseTokens(melodyTokens);
-    this.releaseTokens(chordTokens);
-
-  }
-
-  async playSequence(sequence: SequenceEntry[]): Promise<void> {
-    const interval = calcInterval(this.config.bpm, this.config.timeSignature);
-    const noteDuration = calcNoteDuration(interval, this.config.staccato);
-    const silenceDuration = calcSilenceDuration(interval, noteDuration);
-
-    for (const entry of sequence) {
-      const tokens: number[] = [];
-      if (!entry.muted) {
-        for (const note of entry.notes) tokens.push(this.noteOn(note, entry.velocity ?? 100));
-      }
-      await sleep(noteDuration * 1000);
-      this.releaseTokens(tokens);
-      await sleep(silenceDuration * 1000);
-    }
-  }
-
-  async loopSequence(sequence: SequenceEntry[]): Promise<void> {
-    this.stopLoop();
-
-    const runId = this.loopRunId;
-    this.activeLoopSequence = sequence;
+  start(project: Project, owner: string, revision = 0, delayMs = 100) {
+    this.checkOwner(owner);
+    const sequence = compileProject(project);
+    this.stop();
+    this.project = project;
+    this.owner = owner;
+    this.revision = revision;
     this.playing = true;
-    let sequenceIndex = 0;
-    let nextBoundary = Date.now();
-
-    while (this.playing && runId === this.loopRunId) {
-      const activeSequence = this.activeLoopSequence;
-      if (!activeSequence || activeSequence.length === 0) break;
-      if (sequenceIndex >= activeSequence.length) sequenceIndex = 0;
-
-      const entry = activeSequence[sequenceIndex];
-      this._currentChordIndex = sequenceIndex;
-      sequenceIndex += 1;
-
-      // Read the tempo at each chord boundary so a live BPM update changes
-      // the next step without interrupting the chord currently sounding.
-      const interval = calcInterval(this.config.loopBpm, this.config.timeSignature);
-      const noteDuration = calcNoteDuration(interval, this.config.loopStaccato);
-      const intervalMilliseconds = interval * 1000;
-      const boundary = nextBoundary;
-      await this.playLoopEntry(entry, noteDuration, runId, boundary);
-      nextBoundary = boundary + intervalMilliseconds;
-      // Keep the clock anchored to chord boundaries. If a heavily loaded
-      // process misses a whole beat, recover from the current time instead of
-      // trying to play a burst of overdue chords.
-      if (nextBoundary < Date.now() - intervalMilliseconds) nextBoundary = Date.now();
-      await this.waitUntil(nextBoundary, runId);
-    }
-
-    if (runId === this.loopRunId) {
-      this.releaseAllNotes();
-      this.playing = false;
-      this.activeLoopSequence = null;
-      this._currentChordIndex = -1;
-    }
+    this.error = null;
+    if (owner !== 'legacy') this.heartbeat(owner, this.runId);
+    const startAt = Date.now() + delayMs;
+    this.scheduler.start(sequence, this.clock.now() + delayMs);
+    this.log('start');
+    return { ...this.status(), startAt };
   }
-
-  updateLoopSequence(sequence: SequenceEntry[]): boolean {
-    if (!this.playing) return false;
-    this.activeLoopSequence = sequence;
-    return true;
+  update(
+    project: Project,
+    owner: string,
+    revision: number,
+    applyAt?: number,
+    expectedRunId?: number,
+  ): void {
+    this.checkRun(owner, expectedRunId);
+    if (!this.playing) throw new ConflictError('No progression is currently playing');
+    const sequence = compileProject(project);
+    if (revision <= this.revision)
+      throw new ConflictError('This update is older than the current revision');
+    this.project = project;
+    this.revision = revision;
+    this.scheduler.update(
+      sequence,
+      applyAt === undefined ? -Infinity : this.clock.now() + applyAt - Date.now(),
+    );
+    this.log('update');
   }
-
-  stopLoop(): void {
+  stop(owner?: string, expectedRunId?: number): void {
+    if (owner) this.checkRun(owner, expectedRunId);
+    if (this.playing) this.log('stop');
+    this.scheduler.stop();
+    if (this.leaseTimer !== undefined) this.clock.clearTimer(this.leaseTimer);
+    this.leaseTimer = undefined;
+    this.runId++;
     this.playing = false;
-    this.loopRunId += 1;
-    this.releaseAllNotes();
-    this.activeLoopSequence = null;
-    this._currentChordIndex = -1;
-    if (this.loopTimeout) {
-      clearTimeout(this.loopTimeout);
-      this.loopTimeout = null;
+    this.owner = null;
+    this.currentChordId = null;
+    this.stepId = -1;
+    for (const timer of this.timers) this.clock.clearTimer(timer);
+    this.timers.clear();
+    this.notes.releaseAll('loop:');
+  }
+  heartbeat(owner: string, expectedRunId?: number): void {
+    this.checkRun(owner, expectedRunId);
+    if (!this.playing) throw new ConflictError('No active playback');
+    if (this.leaseTimer !== undefined) this.clock.clearTimer(this.leaseTimer);
+    this.leaseTimer = this.clock.setTimer(
+      () => this.fail(new Error('Playback stopped because its browser session disconnected.')),
+      10000,
+    );
+  }
+  panic(): void {
+    let failure: unknown;
+    try {
+      this.stop();
+    } catch (error) {
+      failure = error;
     }
+    for (const timer of this.liveTimers.values()) this.clock.clearTimer(timer);
+    this.liveTimers.clear();
+    try {
+      this.notes.releaseAll();
+    } catch (error) {
+      failure = error;
+    }
+    for (const channel of this.usedChannels) {
+      try {
+        this.midi.resetChannel(channel);
+      } catch (error) {
+        failure = error;
+      }
+    }
+    this.usedChannels.clear();
+    if (failure) throw failure;
+  }
+  setMidiOutputEnabled(enabled: boolean): void {
+    if (!enabled) this.panic();
+    this.enabled = enabled;
+  }
+  isMidiOutputEnabled(): boolean {
+    return this.enabled;
+  }
+  press(id: string, note: number, velocity: number, channel = 2): void {
+    if (!this.enabled || !this.midi.currentPort())
+      throw new ConflictError('Select a native MIDI output first');
+    if (this.liveTimers.size >= 128 && !this.liveTimers.has(id))
+      throw new ConflictError('Too many held notes');
+    this.notes.press(`live:${id}`, note, velocity, channel);
+    if (!this.liveTimers.has(id)) this.liveTimers.set(id, undefined);
+    this.renew(id);
+  }
+  renew(id: string): void {
+    if (!this.liveTimers.has(id)) return;
+    const previous = this.liveTimers.get(id);
+    if (previous !== undefined) this.clock.clearTimer(previous);
+    this.liveTimers.set(
+      id,
+      this.clock.setTimer(() => {
+        try {
+          this.release(id);
+        } catch (error) {
+          this.fail(error);
+        }
+      }, 10000),
+    );
+  }
+  release(id: string): void {
+    const timer = this.liveTimers.get(id);
+    if (timer !== undefined) this.clock.clearTimer(timer);
+    this.liveTimers.delete(id);
+    this.notes.release(`live:${id}`);
+  }
+  releaseSession(session: string): void {
+    for (const id of [...this.liveTimers.keys()]) {
+      if (!id.startsWith(`${session}:`)) continue;
+      const timer = this.liveTimers.get(id);
+      if (timer !== undefined) this.clock.clearTimer(timer);
+      this.liveTimers.delete(id);
+    }
+    this.notes.releaseAll(`live:${session}:`);
+  }
+  private schedule(callback: () => void, at: number): void {
+    const run = this.runId;
+    const timer = this.clock.setTimer(
+      () => {
+        this.timers.delete(timer);
+        if (run !== this.runId || !this.playing) return;
+        try {
+          callback();
+        } catch (error) {
+          this.fail(error);
+        }
+      },
+      Math.max(0, at - this.clock.now()),
+    );
+    this.timers.add(timer);
+  }
+  private playStep(step: SequenceStep, at: number, bpm: number, occurrence: number): void {
+    this.currentChordId = step.chordId;
+    this.stepId = occurrence;
+    step.events.forEach((event, i) => {
+      const id = `loop:${this.runId}:${occurrence}:${i}`;
+      const start = at + (event.startBeat * 60000) / bpm;
+      this.schedule(() => {
+        // An edit can introduce an attack under a note sustained by an older revision.
+        // Retire that loop owner so its eventual note-off cannot cut the new attack.
+        this.notes.releasePitch(event.note, event.channel, 'loop:');
+        this.notes.press(id, event.note, event.velocity, event.channel);
+      }, start);
+      this.schedule(() => this.notes.release(id), start + (event.durationBeats * 60000) / bpm);
+    });
+  }
+  private fail(error: unknown): void {
+    this.error = error instanceof Error ? error.message : String(error);
+    this.log('error');
+    try {
+      this.panic();
+    } catch {
+      /* Keep the original device error in the snapshot. */
+    }
+  }
+  private log(event: PlaybackLog['event']): void {
+    this.onEvent({
+      event,
+      runId: this.runId,
+      revision: this.revision,
+      device: this.midi.currentPort(),
+      ...(event === 'error' ? { error: this.error ?? 'Unknown playback error' } : {}),
+    });
   }
 }

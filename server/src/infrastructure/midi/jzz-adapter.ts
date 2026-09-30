@@ -1,5 +1,5 @@
 import JZZ from 'jzz';
-import type { MidiOutput } from './midi-output.js';
+import type { MidiOutput } from '../../ports/midi-output.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type JzzEngine = any;
@@ -21,9 +21,10 @@ export class JzzAdapter implements MidiOutput {
       this.engineName = info.engine ?? 'none';
       if (this.engineName === 'none') {
         this.engine = null;
-        this.initializationError = process.platform === 'linux'
-          ? 'Native MIDI is unavailable. Install ALSA (libasound2) or use the browser MIDI output.'
-          : 'Native MIDI is unavailable. Use a browser MIDI output or install the platform MIDI backend.';
+        this.initializationError =
+          process.platform === 'linux'
+            ? 'Native MIDI is unavailable. Install ALSA (libasound2) or use the browser MIDI output.'
+            : 'Native MIDI is unavailable. Use a browser MIDI output or install the platform MIDI backend.';
         return;
       }
       this.refreshPorts();
@@ -35,7 +36,10 @@ export class JzzAdapter implements MidiOutput {
   }
 
   status(): { engine: string; error?: string } {
-    return { engine: this.engineName, ...(this.initializationError ? { error: this.initializationError } : {}) };
+    return {
+      engine: this.engineName,
+      ...(this.initializationError ? { error: this.initializationError } : {}),
+    };
   }
 
   private refreshPorts(): void {
@@ -68,14 +72,19 @@ export class JzzAdapter implements MidiOutput {
     this.portName = '';
   }
 
-  sendNoteOn(note: number, velocity: number): void {
+  sendNoteOn(note: number, velocity: number, channel = 0): void {
     if (!this.port) return;
-    this.port.noteOn(0, note, velocity);
+    this.port.noteOn(channel, note, velocity);
   }
 
-  sendNoteOff(note: number): void {
+  sendNoteOff(note: number, channel = 0): void {
     if (!this.port) return;
-    this.port.noteOff(0, note);
+    this.port.noteOff(channel, note);
+  }
+
+  resetChannel(channel: number): void {
+    if (!this.port) return;
+    for (const controller of [64, 123, 120]) this.port.send([0xb0 + channel, controller, 0]);
   }
 
   currentPort(): string {
@@ -88,7 +97,7 @@ export class JzzAdapter implements MidiOutput {
       throw new Error('No available MIDI ports.');
     }
     const preferred = ports.find(
-      (p) => p.toLowerCase().includes('midi') || p.toLowerCase().includes('virtual')
+      (p) => p.toLowerCase().includes('midi') || p.toLowerCase().includes('virtual'),
     );
     await this.openPort(preferred ?? ports[0]);
   }
