@@ -1,11 +1,33 @@
 {
   "name": "midi-toolbox",
   "private": true,
-  "workspaces": ["server", "client"],
+  "workspaces": [
+    "packages/*",
+    "server",
+    "client"
+  ],
   "scripts": {
-    "dev": "npm run dev --workspace server",
-    "build": "npm run build --workspace client && npm run build --workspace server",
+    "dev": "npm run build:core && npm run dev --workspace server",
+    "build": "npm run build:core && npm run build --workspace client && npm run build --workspace server",
     "build:start": "npm run build && npm start",
-    "start": "npm run start --workspace server"
+    "start": "npm run start --workspace server",
+    "build:core": "npm run build --workspace @midi-toolbox/core",
+    "test": "npm run build:core && node --import tsx --test tests/*.test.ts",
+    "typecheck": "npm run build:core && npm run typecheck --workspaces --if-present",
+    "test:e2e": "npm run build && playwright test",
+    "lint": "eslint client/src server/src packages/*/src",
+    "format": "prettier --write client/src server/src packages tests playwright.config.ts",
+    "format:check": "prettier --check client/src server/src packages tests playwright.config.ts"
+  },
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-vue": "^10.11.1",
+    "prettier": "^3.9.9",
+    "typescript-eslint": "^8.71.0"
   }
 }
